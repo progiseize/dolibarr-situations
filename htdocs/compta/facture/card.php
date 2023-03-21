@@ -1842,6 +1842,7 @@ if (empty($reshook)) {
 			}
 		}
 
+		/** MODIFSITUATION ***********************************************************************************************************************/
 		// Situation invoices
 		if (GETPOST('type') == Facture::TYPE_SITUATION && GETPOST('situations')) {
 			if (empty($dateinvoice)) {
@@ -1861,7 +1862,7 @@ if (empty($reshook)) {
 				$action = 'create';
 			}
 
-			if (!$error) {
+			if (!$error && $conf->global->INVOICE_USE_SITUATION == 1) {
 				$result = $object->fetch(GETPOST('situations', 'int'));
 				$object->fk_facture_source = GETPOST('situations', 'int');
 				$object->type = Facture::TYPE_SITUATION;
@@ -1954,7 +1955,104 @@ if (empty($reshook)) {
 					}
 				}
 			}
+
+			if (!$error && $conf->global->INVOICE_USE_SITUATION == 2) {
+				$result = $object->fetch(GETPOST('situations', 'int'));
+				$object->fk_facture_source = GETPOST('situations', 'int');
+				$object->type = Facture::TYPE_SITUATION;
+
+				if (!empty($origin) && !empty($originid)) {
+					include_once DOL_DOCUMENT_ROOT.'/core/lib/price.lib.php';
+
+					$object->origin = $origin;
+					$object->origin_id = $originid;
+
+					// retained warranty
+					if (!empty($conf->global->INVOICE_USE_RETAINED_WARRANTY)) {
+						$retained_warranty = GETPOST('retained_warranty', 'int');
+						if (price2num($retained_warranty) > 0) {
+							$object->retained_warranty = price2num($retained_warranty);
+						}
+
+						if (GETPOST('retained_warranty_fk_cond_reglement', 'int') > 0) {
+							$object->retained_warranty_fk_cond_reglement = GETPOST('retained_warranty_fk_cond_reglement', 'int');
+						}
+
+						$retained_warranty_date_limit = GETPOST('retained_warranty_date_limit');
+						if (!empty($retained_warranty_date_limit) && $db->jdate($retained_warranty_date_limit)) {
+							$object->retained_warranty_date_limit = $db->jdate($retained_warranty_date_limit);
+						}
+						$object->retained_warranty_date_limit = !empty($object->retained_warranty_date_limit) ? $object->retained_warranty_date_limit : $object->calculate_date_lim_reglement($object->retained_warranty_fk_cond_reglement);
+					}
+
+					foreach ($object->lines as $i => &$line) {
+						$line->origin = $object->origin;
+						$line->origin_id = $line->id;
+						$line->fk_prev_id = $line->id;
+						$line->fetch_optionals();
+						$line->situation_percent = 0; // get good progress including credit note
+
+						// The $line->situation_percent has been modified, so we must recalculate all amounts
+						$tabprice = calcul_price_total($line->qty, $line->subprice, $line->remise_percent, $line->tva_tx, $line->localtax1_tx, $line->localtax2_tx, 0, 'HT', 0, $line->product_type, $mysoc, '', $line->situation_percent);
+
+						$line->total_ht = $tabprice[0];
+						$line->total_tva = $tabprice[1];
+						$line->total_ttc = $tabprice[2];
+						$line->total_localtax1 = $tabprice[9];
+						$line->total_localtax2 = $tabprice[10];
+						$line->multicurrency_total_ht  = $tabprice[16];
+						$line->multicurrency_total_tva = $tabprice[17];
+						$line->multicurrency_total_ttc = $tabprice[18];
+
+						// Si fk_remise_except defini on vérifie si la réduction à déjà été appliquée
+						if ($line->fk_remise_except) {
+							$discount = new DiscountAbsolute($line->db);
+							$result = $discount->fetch($line->fk_remise_except);
+							if ($result > 0) {
+								// Check if discount not already affected to another invoice
+								if ($discount->fk_facture_line > 0) {
+									$line->fk_remise_except = 0;
+								}
+							}
+						}
+					}
+				}
+
+				$object->fetch_thirdparty();
+				$object->date = $dateinvoice;
+				$object->date_pointoftax = $date_pointoftax;
+				$object->note_public = trim(GETPOST('note_public', 'restricthtml'));
+				$object->note = trim(GETPOST('note', 'restricthtml'));
+				$object->note_private = trim(GETPOST('note', 'restricthtml'));
+				$object->ref_client = GETPOST('ref_client', 'alpha');
+				$object->model_pdf = GETPOST('model', 'alpha');
+				$object->fk_project = GETPOST('projectid', 'int');
+				$object->cond_reglement_id = GETPOST('cond_reglement_id', 'int');
+				$object->mode_reglement_id = GETPOST('mode_reglement_id', 'int');
+				$object->remise_absolue =price2num(GETPOST('remise_absolue'), 'MU', 2);
+				$object->remise_percent = price2num(GETPOST('remise_percent'), '', 2);
+
+				// Proprietes particulieres a facture de remplacement
+
+				$object->situation_counter = $object->situation_counter + 1;
+				$id = $object->createFromCurrent($user);
+				if ($id <= 0) {
+					$mesg = $object->error;
+				} else {
+					$nextSituationInvoice = new Facture($db);
+					$nextSituationInvoice->fetch($id);
+
+					// create extrafields with data from create form
+					$extrafields->fetch_name_optionals_label($nextSituationInvoice->table_element);
+					$ret = $extrafields->setOptionalsFromPost(null, $nextSituationInvoice);
+					if ($ret > 0) {
+						$nextSituationInvoice->insertExtraFields();
+					}
+				}
+			}
+
 		}
+		/*************************************************************************************************************************/
 
 		// End of object creation, we show it
 		if ($id > 0 && !$error) {

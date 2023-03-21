@@ -4160,7 +4160,7 @@ class Facture extends CommonInvoice
 	public function update_percent($line, $percent, $update_price = true)
 	{
 		// phpcs:enable
-		global $mysoc, $user;
+		global $mysoc, $user, $conf;
 
 		// Progress should never be changed for discount lines
 		if (($line->info_bits & 2) == 2) {
@@ -4173,8 +4173,16 @@ class Facture extends CommonInvoice
 		if ($percent > 100) {
 			$percent = 100;
 		}
-		$line->situation_percent = $percent;
-		$tabprice = calcul_price_total($line->qty, $line->subprice, $line->remise_percent, $line->tva_tx, $line->localtax1_tx, $line->localtax2_tx, 0, 'HT', 0, $line->product_type, $mysoc, '', $percent);
+
+		if($conf->global->INVOICE_USE_SITUATION == 1){
+			$line->situation_percent = $percent;
+			$tabprice = calcul_price_total($line->qty, $line->subprice, $line->remise_percent, $line->tva_tx, $line->localtax1_tx, $line->localtax2_tx, 0, 'HT', 0, $line->product_type, $mysoc, '', $percent);		
+		} elseif($conf->global->INVOICE_USE_SITUATION == 2){
+			$previous_progress = $line->get_prev_progress($line->fk_facture);
+			$current_progress = $percent - $previous_progress;
+			$line->situation_percent = $current_progress;
+			$tabprice = calcul_price_total($line->qty, $line->subprice, $line->remise_percent, $line->tva_tx, $line->localtax1_tx, $line->localtax2_tx, 0, 'HT', 0, $line->product_type, $mysoc, '', $current_progress);
+		}
 		$line->total_ht = $tabprice[0];
 		$line->total_tva = $tabprice[1];
 		$line->total_ttc = $tabprice[2];
