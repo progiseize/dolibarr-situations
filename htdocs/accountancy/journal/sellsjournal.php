@@ -209,18 +209,20 @@ if ($result) {
 		$line = new FactureLigne($db);
 		$line->fetch($obj->fdid);
 
-		// Situation invoices handling
-		$prev_progress = $line->get_prev_progress($obj->rowid);
+		if ($conf->global->INVOICE_USE_SITUATION == 1) {
+			// Situation invoices handling
+			$prev_progress = $line->get_prev_progress($obj->rowid);
 
-		if ($obj->type == Facture::TYPE_SITUATION) {
-			// Avoid divide by 0
-			if ($obj->situation_percent == 0) {
-				$situation_ratio = 0;
+			if ($obj->type == Facture::TYPE_SITUATION) {
+				// Avoid divide by 0
+				if ($obj->situation_percent == 0) {
+					$situation_ratio = 0;
+				} else {
+					$situation_ratio = ($obj->situation_percent - $prev_progress) / $obj->situation_percent;
+				}
 			} else {
-				$situation_ratio = ($obj->situation_percent - $prev_progress) / $obj->situation_percent;
+				$situation_ratio = 1;
 			}
-		} else {
-			$situation_ratio = 1;
 		}
 
 		// Invoice lines
@@ -249,19 +251,36 @@ if ($result) {
 			$tablocaltax2[$obj->rowid][$compta_localtax2] = 0;
 		}
 
-		$total_ttc = $obj->total_ttc * $situation_ratio;
+		if ($conf->global->INVOICE_USE_SITUATION == 1) {
+			$total_ttc = $obj->total_ttc * $situation_ratio;
+		} else {
+			$total_ttc = $obj->total_ttc;
+		}
 		if (!empty($conf->global->INVOICE_USE_RETAINED_WARRANTY) && $obj->retained_warranty > 0) {
 			$retained_warranty = (double) price2num($total_ttc * $obj->retained_warranty / 100, 'MT');
 			$tabwarranty[$obj->rowid][$compta_soc] += $retained_warranty;
 			$total_ttc -= $retained_warranty;
 		}
 		$tabttc[$obj->rowid][$compta_soc] += $total_ttc;
-		$tabht[$obj->rowid][$compta_prod] += $obj->total_ht * $situation_ratio;
-		if (empty($line->tva_npr)) {
-			$tabtva[$obj->rowid][$compta_tva] += $obj->total_tva * $situation_ratio; // We ignore line if VAT is a NPR
+		if ($conf->global->INVOICE_USE_SITUATION == 1) {
+			$tabht[$obj->rowid][$compta_prod] += $obj->total_ht * $situation_ratio;
+		} else {
+			$tabht[$obj->rowid][$compta_prod] += $obj->total_ht;
 		}
-		$tablocaltax1[$obj->rowid][$compta_localtax1] += $obj->total_localtax1 * $situation_ratio;
-		$tablocaltax2[$obj->rowid][$compta_localtax2] += $obj->total_localtax2 * $situation_ratio;
+		if (empty($line->tva_npr)) {
+			if ($conf->global->INVOICE_USE_SITUATION == 1) {
+				$tabtva[$obj->rowid][$compta_tva] += $obj->total_tva * $situation_ratio; // We ignore line if VAT is a NPR
+			} else {
+				$tabtva[$obj->rowid][$compta_tva] += $obj->total_tva; // We ignore line if VAT is a NPR
+			}
+		}
+		if ($conf->global->INVOICE_USE_SITUATION == 1) {
+			$tablocaltax1[$obj->rowid][$compta_localtax1] += $obj->total_localtax1 * $situation_ratio;
+			$tablocaltax2[$obj->rowid][$compta_localtax2] += $obj->total_localtax2 * $situation_ratio;
+		} else {
+			$tablocaltax1[$obj->rowid][$compta_localtax1] += $obj->total_localtax1;
+			$tablocaltax2[$obj->rowid][$compta_localtax2] += $obj->total_localtax2;
+		}
 		$tabcompany[$obj->rowid] = array(
 			'id' => $obj->socid,
 			'name' => $obj->name,
