@@ -16,6 +16,7 @@
  * Copyright (C) 2015-2016  Marcos García           <marcosgdf@gmail.com>
  * Copyright (C) 2018-2021  Frédéric France         <frederic.france@netlogic.fr>
  * Copyright (C) 2022       Gauthier VERDOL         <gauthier.verdol@atm-consulting.fr>
+ * Copyright (C) 2023       Anthony DAMHET         	<a.damhet@progiseize.fr>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -2645,6 +2646,21 @@ if (empty($reshook)) {
 			}
 		}
 
+		// SITUATION
+		if($conf->global->INVOICE_USE_SITUATION == 2){
+			
+			$previousprogress = $line->get_allprev_progress($line->fk_facture);
+			$fullprogress = price2num(GETPOST('progress', 'alpha'));
+			$addprogress = $fullprogress - $previousprogress;
+
+			if($fullprogress < $previousprogress){
+				$error++;
+				setEventMessages($langs->trans('CantBeLessThanMinPercent'), null, 'errors');
+			}
+
+		} else {
+			$addprogress = price2num(GETPOST('progress', 'alpha'));
+		}
 
 		// Update line
 		if (!$error) {
@@ -2664,6 +2680,8 @@ if (empty($reshook)) {
 				$pu = $pu_ttc;
 				$price_base_type = 'TTC';
 			}
+
+			
 
 			$result = $object->updateline(
 				GETPOST('lineid', 'int'),
@@ -2686,7 +2704,7 @@ if (empty($reshook)) {
 				$label,
 				$special_code,
 				$array_options,
-				price2num(GETPOST('progress', 'alpha')),
+				$addprogress,
 				GETPOST('units', 'alpha'),
 				$pu_ht_devise
 			);
@@ -2758,7 +2776,7 @@ if (empty($reshook)) {
 		if (GETPOST('all_progress') != "") {
 			$all_progress = GETPOST('all_progress', 'int');
 			foreach ($object->lines as $line) {
-				$percent = $line->get_prev_progress($object->id);
+				$percent = $line->get_allprev_progress($object->id);
 				if (floatval($all_progress) < floatval($percent)) {
 					$mesg = $langs->trans("Line").' '.$i.' : '.$langs->trans("CantBeLessThanMinPercent");
 					setEventMessages($mesg, null, 'warnings');
