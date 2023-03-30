@@ -82,4 +82,5 @@ ALTER TABLE llx_supplier_proposal ADD INDEX idx_supplier_proposal_fk_user_valid 
 ALTER TABLE llx_supplier_proposal ADD INDEX idx_supplier_proposal_fk_projet (fk_projet);
 ALTER TABLE llx_supplier_proposal ADD INDEX idx_supplier_proposal_fk_account(fk_account);
 
-
+-- Force INVOICE_USE_SITUATION to value 2 if exist
+UPDATE llx_const SET value = 2 WHERE __DECRYPT('name')__ = 'INVOICE_USE_SITUATION' AND __DECRYPT('value')__ = '1';
