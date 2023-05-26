@@ -60,42 +60,49 @@ $type = 'invoice';
 $form = new Form($db);
 $formSetup = new FormSetup($db);
 
+$arrayYesNo = array(
+	0 => $langs->trans('No'),
+	1 => $langs->trans('Yes')
+);
 
-// Setup conf MYMODULE_MYPARAM4 : exemple of quick define write style
-$formSetup->newItem('INVOICE_USE_SITUATION')
-	->setAsYesNo()
-	->nameText = $langs->trans('UseSituationInvoices');
+// INVOICE_USE_SITUATION
+$arrayAvailableMethod = array(
+	0 => $langs->trans('No'),
+	1 => $langs->trans('UseSituationInvoicesMethod1'),
+	2 => $langs->trans('UseSituationInvoicesMethod2'), // Todo - check if doli > 18 or module migration
+);
 
-$item = $formSetup->newItem('INVOICE_USE_SITUATION_CREDIT_NOTE')
-	->setAsYesNo()
-	->nameText = $langs->trans('UseSituationInvoicesCreditNote');
+$item =	$formSetup->newItem('INVOICE_USE_SITUATION');
+$item->nameText = $langs->trans('UseSituationInvoices');
+if ($action == 'edit'){
+	$item->fieldInputOverride = $form->selectarray('INVOICE_USE_SITUATION', $arrayAvailableMethod, $conf->global->INVOICE_USE_SITUATION,0);
+}
 
-//$item = $formSetup->newItem('INVOICE_USE_RETAINED_WARRANTY')
-//	->setAsYesNo()
-//	->nameText = $langs->trans('Retainedwarranty');
+// INVOICE_USE_SITUATION_CREDIT_NOTE
+$item = $formSetup->newItem('INVOICE_USE_SITUATION_CREDIT_NOTE');
+$item->nameText = $langs->trans('UseSituationInvoicesCreditNote');
+if ($action == 'edit'){
+	$item->fieldInputOverride = $form->selectarray('INVOICE_USE_SITUATION_CREDIT_NOTE', $arrayYesNo, $conf->global->INVOICE_USE_SITUATION_CREDIT_NOTE,0);
+}
 
-
-$item = $formSetup->newItem('INVOICE_USE_RETAINED_WARRANTY');
-$item->nameText = $langs->trans('AllowedInvoiceForRetainedWarranty');
-
+// INVOICE_USE_RETAINED_WARRANTY
 $arrayAvailableType = array(
 	Facture::TYPE_SITUATION => $langs->trans("InvoiceSituation"),
 	Facture::TYPE_STANDARD.'+'.Facture::TYPE_SITUATION => $langs->trans("InvoiceSituation").' + '.$langs->trans("InvoiceStandard"),
 );
 
+$item = $formSetup->newItem('INVOICE_USE_RETAINED_WARRANTY');
+$item->nameText = $langs->trans('AllowedInvoiceForRetainedWarranty');
 if ($action == 'edit') {
 	$item->fieldInputOverride = $form->selectarray('INVOICE_USE_RETAINED_WARRANTY', $arrayAvailableType, $conf->global->INVOICE_USE_RETAINED_WARRANTY, 1);
-} else {
-	$item->fieldOutputOverride= isset($arrayAvailableType[$conf->global->INVOICE_USE_RETAINED_WARRANTY])?$arrayAvailableType[$conf->global->INVOICE_USE_RETAINED_WARRANTY]:'';
 }
 
-//$item = $formSetup->newItem('INVOICE_RETAINED_WARRANTY_LIMITED_TO_SITUATION')->setAsYesNo();
-//$item->nameText = $langs->trans('RetainedwarrantyOnlyForSituation');
-
-$formSetup->newItem('INVOICE_RETAINED_WARRANTY_LIMITED_TO_FINAL_SITUATION')
-	->setAsYesNo()
-	->nameText = $langs->trans('RetainedwarrantyOnlyForSituationFinal');
-
+// INVOICE_RETAINED_WARRANTY_LIMITED_TO_FINAL_SITUATION
+$item = $formSetup->newItem('INVOICE_RETAINED_WARRANTY_LIMITED_TO_FINAL_SITUATION');
+$item->nameText = $langs->trans('RetainedwarrantyOnlyForSituationFinal');
+if ($action == 'edit') {
+	$item->fieldInputOverride = $form->selectarray('INVOICE_RETAINED_WARRANTY_LIMITED_TO_FINAL_SITUATION', $arrayYesNo, $conf->global->INVOICE_RETAINED_WARRANTY_LIMITED_TO_FINAL_SITUATION,0);
+}
 
 $item = $formSetup->newItem('INVOICE_SITUATION_DEFAULT_RETAINED_WARRANTY_PERCENT');
 $item->nameText = $langs->trans('RetainedwarrantyDefaultPercent');
@@ -111,9 +118,6 @@ $item->fieldAttr = array(
 $item = $formSetup->newItem('INVOICE_SITUATION_DEFAULT_RETAINED_WARRANTY_COND_ID');
 $item->nameText = $langs->trans('PaymentConditionsShortRetainedWarranty');
 $form->load_cache_conditions_paiements();
-if (!empty($conf->global->INVOICE_SITUATION_DEFAULT_RETAINED_WARRANTY_COND_ID) && isset($form->cache_conditions_paiements[$conf->global->INVOICE_SITUATION_DEFAULT_RETAINED_WARRANTY_COND_ID]['label'])) {
-	$item->fieldOutputOverride = $form->cache_conditions_paiements[$conf->global->INVOICE_SITUATION_DEFAULT_RETAINED_WARRANTY_COND_ID]['label'];
-}
 $item->fieldInputOverride = $form->getSelectConditionsPaiements($conf->global->INVOICE_SITUATION_DEFAULT_RETAINED_WARRANTY_COND_ID, 'INVOICE_SITUATION_DEFAULT_RETAINED_WARRANTY_COND_ID', -1, 1);
 
 
@@ -123,8 +127,16 @@ $item->fieldInputOverride = $form->getSelectConditionsPaiements($conf->global->I
 
 include DOL_DOCUMENT_ROOT.'/core/actions_setmoduleoptions.inc.php';
 
-
-
+// On réattribue les bonnes valeurs après les actions
+if($action != 'edit'):
+	$formSetup->items['INVOICE_USE_SITUATION']->fieldOutputOverride = isset($arrayAvailableMethod[$conf->global->INVOICE_USE_SITUATION])?$arrayAvailableMethod[$conf->global->INVOICE_USE_SITUATION]:'';
+	$formSetup->items['INVOICE_USE_SITUATION_CREDIT_NOTE']->fieldOutputOverride = isset($arrayYesNo[$conf->global->INVOICE_USE_SITUATION_CREDIT_NOTE])?$arrayYesNo[$conf->global->INVOICE_USE_SITUATION_CREDIT_NOTE]:'';
+	$formSetup->items['INVOICE_RETAINED_WARRANTY_LIMITED_TO_FINAL_SITUATION']->fieldOutputOverride = isset($arrayYesNo[$conf->global->INVOICE_RETAINED_WARRANTY_LIMITED_TO_FINAL_SITUATION])?$arrayYesNo[$conf->global->INVOICE_RETAINED_WARRANTY_LIMITED_TO_FINAL_SITUATION]:'';
+	$formSetup->items['INVOICE_USE_RETAINED_WARRANTY']->fieldOutputOverride= isset($arrayAvailableType[$conf->global->INVOICE_USE_RETAINED_WARRANTY])?$arrayAvailableType[$conf->global->INVOICE_USE_RETAINED_WARRANTY]:'';
+	if (!empty($conf->global->INVOICE_SITUATION_DEFAULT_RETAINED_WARRANTY_COND_ID) && isset($form->cache_conditions_paiements[$conf->global->INVOICE_SITUATION_DEFAULT_RETAINED_WARRANTY_COND_ID]['label'])) {
+		$formSetup->items['INVOICE_SITUATION_DEFAULT_RETAINED_WARRANTY_COND_ID']->fieldOutputOverride = $form->cache_conditions_paiements[$conf->global->INVOICE_SITUATION_DEFAULT_RETAINED_WARRANTY_COND_ID]['label'];
+	}
+endif;
 /*
  * View
  */
