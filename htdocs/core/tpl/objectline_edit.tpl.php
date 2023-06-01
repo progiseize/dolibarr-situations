@@ -300,6 +300,12 @@ $coldisplay++;
 		}
 
 		print '<td class="nowrap right linecolcycleref"><input class="right" type="text" size="1" value="'.$fieldv.'" name="progress">%</td>';
+
+		if($conf->global->INVOICE_USE_SITUATION == 2):
+			$coldisplay++;
+			print '<td></td>';
+		endif;
+
 		$coldisplay++;
 		print '<td></td>';
 	}
