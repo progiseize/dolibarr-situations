@@ -11,6 +11,7 @@
  * Copyright (C) 2018       Frédéric France         <frederic.france@netlogic.fr>
  * Copyright (C) 2022		Anthony Berton				<anthony.berton@bb2a.fr>
  * Copyright (C) 2022       Alexandre Spangaro      <aspangaro@open-dsi.fr>
+ * Copyright (C) 2022-2023  Eric Seigne      		<eric.seigne@cap-rel.fr>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -38,6 +39,7 @@ require_once DOL_DOCUMENT_ROOT.'/product/class/product.class.php';
 require_once DOL_DOCUMENT_ROOT.'/core/lib/company.lib.php';
 require_once DOL_DOCUMENT_ROOT.'/core/lib/functions2.lib.php';
 require_once DOL_DOCUMENT_ROOT.'/core/lib/pdf.lib.php';
+require_once DOL_DOCUMENT_ROOT.'/core/lib/price.lib.php';
 
 
 /**
@@ -167,13 +169,46 @@ class pdf_octopus extends ModelePDFFactures
 
 
 	/**
+	 * Situation invoices
+	 *
+	 * @var [type]
+	 */
+	public $TDataSituation;
+
+
+	public $posxdesc;
+	public $posxpicture;
+	public $posxtva;
+	public $posxunit;
+	public $posxqty;
+	public $posxup;
+	public $posxdiscount;
+	public $posxsommes;
+	public $posxprogress_current;
+	public $posxprogress_prec;
+	public $posxcurrent_prec;
+	public $postotalht;
+	public $tabTitleHeight;
+	public $posx_cumul_anterieur;
+	public $posx_new_cumul;
+	public $posx_current;
+	public $defaultContentsFieldsStyle;
+	public $defaultTitlesFieldsStyle;
+
+	/**
 	 *	Constructor
 	 *
 	 *  @param		DoliDB		$db      Database handler
 	 */
 	public function __construct($db)
 	{
-		global $conf, $langs, $mysoc;
+		global $conf, $langs, $mysoc, $object;
+		// for retro compatibility
+		if (!empty($conf->global->INVOICE_USE_SITUATION_RETAINED_WARRANTY) && empty($conf->global->INVOICE_USE_RETAINED_WARRANTY)) {
+			// before it was only for final situation invoice
+			$conf->global->INVOICE_USE_RETAINED_WARRANTY = $conf->global->INVOICE_USE_SITUATION_RETAINED_WARRANTY;
+			$conf->global->USE_RETAINED_WARRANTY_ONLY_FOR_SITUATION_FINAL = 1;
+		}
 
 		// Translations
 		$langs->loadLangs(array("main", "bills"));
@@ -194,16 +229,23 @@ class pdf_octopus extends ModelePDFFactures
 		$this->marge_haute = getDolGlobalInt('MAIN_PDF_MARGIN_TOP', 10);
 		$this->marge_basse = getDolGlobalInt('MAIN_PDF_MARGIN_BOTTOM', 10);
 
+		$this->posx_cumul_anterieur = 94;
+		$this->posx_new_cumul = 130;
+		$this->posx_current = 166;
+
+		$this->format = array($this->page_largeur,$this->page_hauteur);
 		$this->option_logo = 1; // Display logo
 		$this->option_tva = 1; // Manage the vat option FACTURE_TVAOPTION
 		$this->option_modereg = 1; // Display payment mode
 		$this->option_condreg = 1; // Display payment terms
+		$this->option_codeproduitservice = 1;      // Affiche code produit-service
 		$this->option_multilang = 1; // Available in several languages
 		$this->option_escompte = 1; // Displays if there has been a discount
 		$this->option_credit_note = 1; // Support credit notes
 		$this->option_freetext = 1; // Support add of a personalised text
 		$this->option_draft_watermark = 1; // Support add of a watermark on drafts
 		$this->watermark = '';
+		$this->franchise=!$mysoc->tva_assuj;
 
 		// Get source company
 		$this->emetteur = $mysoc;
@@ -215,7 +257,7 @@ class pdf_octopus extends ModelePDFFactures
 		$this->posxdesc = $this->marge_gauche + 1; // used for notes ans other stuff
 
 
-		$this->tabTitleHeight = 5; // default height
+		$this->tabTitleHeight = 8; // default height (2 lines due to overtitle)
 
 		//  Use new system for position of columns, view  $this->defineColumnField()
 
@@ -225,11 +267,16 @@ class pdf_octopus extends ModelePDFFactures
 		$this->localtax2 = array();
 		$this->atleastoneratenotnull = 0;
 		$this->atleastonediscount = 0;
-		$this->situationinvoice = false;
+		$this->situationinvoice = true;
+		if (!empty($object)) {
+			$this->TDataSituation = $this->_getDataSituation($object);
+		} else {
+			dol_syslog("object is empty, do not call _getDataSituation...");
+		}
 	}
 
 
-	// phpcs:disable PEAR.NamingConventions.ValidFunctionName.ScopeNotCamelCaps
+    // phpcs:disable PEAR.NamingConventions.ValidFunctionName.ScopeNotCamelCaps
 	/**
 	 *  Function to build pdf onto disk
 	 *
@@ -243,7 +290,7 @@ class pdf_octopus extends ModelePDFFactures
 	 */
 	public function write_file($object, $outputlangs, $srctemplatepath = '', $hidedetails = 0, $hidedesc = 0, $hideref = 0)
 	{
-		// phpcs:enable
+        // phpcs:enable
 		global $user, $langs, $conf, $mysoc, $db, $hookmanager, $nblines;
 
 		dol_syslog("write_file outputlangs->defaultlang=".(is_object($outputlangs) ? $outputlangs->defaultlang : 'null'));
@@ -267,6 +314,10 @@ class pdf_octopus extends ModelePDFFactures
 			$outputlangsbis->loadLangs(array("main", "bills", "products", "dict", "companies"));
 		}
 
+		if (empty($object) || ($object->type != Facture::TYPE_SITUATION && ($object->type != Facture::TYPE_CREDIT_NOTE &&  !empty($object->situation_cycle_ref)))) {
+			setEventMessage($langs->trans('BtpWarningsObjectIsNotASituation'), 'warnings');
+			return 1;
+		}
 		// Show Draft Watermark
 		if ($object->statut == $object::STATUS_DRAFT && (!empty($conf->global->FACTURE_DRAFT_WATERMARK))) {
 			$this->watermark = $conf->global->FACTURE_DRAFT_WATERMARK;
@@ -372,15 +423,24 @@ class pdf_octopus extends ModelePDFFactures
 				// Set nblines with the new facture lines content after hook
 				$nblines = count($object->lines);
 				$nbpayments = count($object->getListOfPayments());
+				$nbprevsituation = is_array($object->tab_previous_situation_invoice) ? count($object->tab_previous_situation_invoice) : 0;
 
 				// Create pdf instance
 				$pdf = pdf_getInstance($this->format);
-				$default_font_size = pdf_getPDFFontSize($outputlangs); // Must be after pdf_getInstance
+				//$default_font_size = pdf_getPDFFontSize($outputlangs); // Must be after pdf_getInstance
+				$default_font_size = 9;
 				$pdf->SetAutoPageBreak(1, 0);
 
-				$this->heightforinfotot = 50 + (4 * $nbpayments); // Height reserved to output the info and total part and payment part
-				$this->heightforfreetext = (isset($conf->global->MAIN_PDF_FREETEXT_HEIGHT) ? $conf->global->MAIN_PDF_FREETEXT_HEIGHT : 5); // Height reserved to output the free text on last page
-				$this->heightforfooter = $this->marge_basse + (empty($conf->global->MAIN_GENERATE_DOCUMENTS_SHOW_FOOT_DETAILS) ? 12 : 22); // Height reserved to output the footer (value include bottom margin)
+				// compute height for situation invoices
+				$this->heightforinfotot = 45;	// Height reserved to output the info and total part and payment part
+				if (empty($conf->global->INVOICE_NO_PAYMENT_DETAILS) && $nbpayments > 0) {
+					$this->heightforinfotot += 4 * ($nbpayments + 3);
+				}
+				if ($nbprevsituation > 0) {
+					$this->heightforinfotot += 4 * ($nbprevsituation + 3);
+				}
+				$this->heightforfreetext= (isset($conf->global->MAIN_PDF_FREETEXT_HEIGHT) ? $conf->global->MAIN_PDF_FREETEXT_HEIGHT : 5);	// Height reserved to output the free text on last page
+				$this->heightforfooter = $this->marge_basse + (empty($conf->global->MAIN_GENERATE_DOCUMENTS_SHOW_FOOT_DETAILS) ? 12 : 22);	// Height reserved to output the footer (value include bottom margin)
 
 				if (class_exists('TCPDF')) {
 					$pdf->setPrintHeader(false);
@@ -403,7 +463,7 @@ class pdf_octopus extends ModelePDFFactures
 				$pdf->SetDrawColor(128, 128, 128);
 
 				$pdf->SetTitle($outputlangs->convToOutputCharset($object->ref));
-				$pdf->SetSubject($outputlangs->transnoentities("PdfInvoiceTitle"));
+				$pdf->SetSubject($outputlangs->transnoentities("PDFBtpTitle"));
 				$pdf->SetCreator("Dolibarr ".DOL_VERSION);
 				$pdf->SetAuthor($mysoc->name.($user->id > 0 ? ' - '.$outputlangs->convToOutputCharset($user->getFullName($outputlangs)) : ''));
 				$pdf->SetKeyWords($outputlangs->convToOutputCharset($object->ref)." ".$outputlangs->transnoentities("PdfInvoiceTitle")." ".$outputlangs->convToOutputCharset($object->thirdparty->name));
@@ -467,12 +527,8 @@ class pdf_octopus extends ModelePDFFactures
 				}
 				$this->categoryOfOperation = $categoryOfOperation;
 
-				// Situation invoice handling
-				if ($object->situation_cycle_ref) {
-					$this->situationinvoice = true;
-				}
-
 				// New page
+				print "call addpage 2";
 				$pdf->AddPage();
 				if (!empty($tplidx)) {
 					$pdf->useTemplate($tplidx);
@@ -480,6 +536,7 @@ class pdf_octopus extends ModelePDFFactures
 				$pagenb++;
 
 				// Output header (logo, ref and address blocks). This is first call for first page.
+				print "call pagehead 1";
 				$pagehead = $this->_pagehead($pdf, $object, 1, $outputlangs, $outputlangsbis);
 				$top_shift = $pagehead['top_shift'];
 				$shipp_shift = $pagehead['shipp_shift'];
@@ -532,11 +589,30 @@ class pdf_octopus extends ModelePDFFactures
 				$this->tab_top += $extra_under_address_shift;
 				$this->tab_top_newpage += 0;
 
-
 				// Define heigth of table for lines (for first page)
 				$tab_height = $this->page_hauteur - $this->tab_top - $this->heightforfooter - $this->heightforfreetext;
 
 				$nexY = $this->tab_top - 1;
+
+				/**** SPECIFIC STUFF FOR SITUATIONS INVOICES FIRST PAGE ****/
+				$tab_top = 90;
+				$tab_height = 130;
+				$tab_height_newpage = 150;
+
+				$this->_tableFirstPage($pdf, $tab_top, $this->page_hauteur - 100 - $this->heightforfreetext - $this->heightforfooter, 0, $outputlangs, 0, 0, $object->multicurrency_code);
+
+				$bottomlasttab=$this->page_hauteur - $this->heightforinfotot - $this->heightforfreetext - $this->heightforfooter + 1;
+
+				$this->_pagefoot($pdf, $object, $outputlangs, 1);
+
+				print "call addpage 3";
+				$pdf->AddPage();
+				$pdf->setPage(2);
+				$pagenb++;
+				$this->_pagehead($pdf, $object, 0, $outputlangs, $outputlangsbis);
+				$pdf->setTopMargin($this->tab_top_newpage);
+
+				/**** END SPECIFIC SITUATION INVOICES FIRST PAGE ****/
 
 				// Incoterm
 				$height_incoterms = 0;
@@ -604,12 +680,14 @@ class pdf_octopus extends ModelePDFFactures
 
 						// prepare pages to receive notes
 						while ($pagenb < $pageposafternote) {
+							print "call addpage 1";
 							$pdf->AddPage();
 							$pagenb++;
 							if (!empty($tplidx)) {
 								$pdf->useTemplate($tplidx);
 							}
 							if (!getDolGlobalInt('MAIN_PDF_DONOTREPEAT_HEAD')) {
+								print "call pagehead 2";
 								$this->_pagehead($pdf, $object, 0, $outputlangs, $outputlangsbis);
 							}
 							// $this->_pagefoot($pdf,$object,$outputlangs,1);
@@ -628,6 +706,7 @@ class pdf_octopus extends ModelePDFFactures
 						$posyafter = $pdf->GetY();
 
 						if ($posyafter > ($this->page_hauteur - ($this->heightforfooter + $this->heightforfreetext + 20))) {	// There is no space left for total+free text
+							print "call addpage 4";
 							$pdf->AddPage('', '', true);
 							$pagenb++;
 							$pageposafternote++;
@@ -643,7 +722,6 @@ class pdf_octopus extends ModelePDFFactures
 						$i = $pageposbeforenote;
 						while ($i < $pageposafternote) {
 							$pdf->setPage($i);
-
 
 							$pdf->SetDrawColor(128, 128, 128);
 							// Draw note frame
@@ -668,6 +746,7 @@ class pdf_octopus extends ModelePDFFactures
 							$pdf->useTemplate($tplidx);
 						}
 						if (!getDolGlobalInt('MAIN_PDF_DONOTREPEAT_HEAD')) {
+							print "call pagehead 3";
 							$this->_pagehead($pdf, $object, 0, $outputlangs, $outputlangsbis);
 						}
 						$height_note = $posyafter - $this->tab_top_newpage;
@@ -682,6 +761,7 @@ class pdf_octopus extends ModelePDFFactures
 
 						if ($posyafter > ($this->page_hauteur - ($this->heightforfooter + $this->heightforfreetext + 20))) {
 							// not enough space, need to add page
+							print "call addpage 5";
 							$pdf->AddPage('', '', true);
 							$pagenb++;
 							$pageposafternote++;
@@ -690,6 +770,7 @@ class pdf_octopus extends ModelePDFFactures
 								$pdf->useTemplate($tplidx);
 							}
 							if (!getDolGlobalInt('MAIN_PDF_DONOTREPEAT_HEAD')) {
+								print "call pagehead 4";
 								$this->_pagehead($pdf, $object, 0, $outputlangs, $outputlangsbis);
 							}
 
@@ -707,11 +788,12 @@ class pdf_octopus extends ModelePDFFactures
 				$this->prepareArrayColumnField($object, $outputlangs, $hidedetails, $hidedesc, $hideref);
 
 				// Table simulation to know the height of the title line (this set this->tableTitleHeight)
-				$pdf->startTransaction();
-				$this->pdfTabTitles($pdf, $this->tab_top, $tab_height, $outputlangs, $hidetop);
-				$pdf->rollbackTransaction(true);
+				// don't need it in situation invoices
+				// $pdf->startTransaction();
+				// $this->pdfTabTitles($pdf, $this->tab_top_newpage + ($this->tabTitleHeight/2), $tab_height, $outputlangs, $hidetop);
+				// $pdf->rollbackTransaction(true);
 
-				$nexY = $this->tab_top + $this->tabTitleHeight;
+				$nexY = $this->tab_top_newpage + $this->tabTitleHeight;
 
 				// Loop on each lines
 				$pageposbeforeprintlines = $pdf->getPage();
@@ -738,6 +820,7 @@ class pdf_octopus extends ModelePDFFactures
 					if ($this->getColumnStatus('photo')) {
 						// We start with Photo of product line
 						if (isset($imglinesize['width']) && isset($imglinesize['height']) && ($curY + $imglinesize['height']) > ($this->page_hauteur - ($this->heightforfooter + $this->heightforfreetext + $this->heightforinfotot))) {	// If photo too high, we moved completely on new page
+							print "call addpage 6";
 							$pdf->AddPage('', '', true);
 							if (!empty($tplidx)) {
 								$pdf->useTemplate($tplidx);
@@ -780,6 +863,7 @@ class pdf_octopus extends ModelePDFFactures
 							//var_dump($posyafter); var_dump(($this->page_hauteur - ($this->heightforfooter+$this->heightforfreetext+$this->heightforinfotot))); exit;
 							if ($posyafter > ($this->page_hauteur - ($this->heightforfooter + $this->heightforfreetext + $this->heightforinfotot))) {	// There is no space left for total+free text
 								if ($i == ($nblines - 1)) {	// No more lines, and no space left to show total, so we create a new page
+									print "call addpage 7";
 									$pdf->AddPage('', '', true);
 									if (!empty($tplidx)) {
 										$pdf->useTemplate($tplidx);
@@ -795,8 +879,7 @@ class pdf_octopus extends ModelePDFFactures
 									$showpricebeforepagebreak = 0;
 								}
 							}
-						} else // No pagebreak
-						{
+						} else { // No pagebreak
 							$pdf->commitTransaction();
 						}
 						$posYAfterDescription = $pdf->GetY();
@@ -867,24 +950,41 @@ class pdf_octopus extends ModelePDFFactures
 						$nexY = max($pdf->GetY(), $nexY);
 					}
 
-					// Total with tax line (TTC)
-					if ($this->getColumnStatus('totalincltax')) {
-						$total_incl_tax = pdf_getlinetotalwithtax($object, $i, $outputlangs, $hidedetails);
-						$this->printStdColumnContent($pdf, $curY, 'totalincltax', $total_incl_tax);
+					// Récupération des infos de la ligne précédente
+					$TInfosLigneSituationPrecedente = $this->_getInfosLineDerniereSituation($object, $object->lines[$i]);
+
+					// var_dump($TInfosLigneSituationPrecedente);exit;
+
+					// "Sommes"
+					$columkey = 'btpsomme';
+					if ($this->getColumnStatus($columkey)) {
+						$printval = price($TInfosLigneSituationPrecedente['total_ht_without_progress'], 0, '', 1, -1, 2);
+						$this->printStdColumnContent($pdf, $curY, $columkey, $printval);
+						print "btpsomme " . $printval;
 						$nexY = max($pdf->GetY(), $nexY);
 					}
 
-					// Extrafields
-					if (!empty($object->lines[$i]->array_options)) {
-						foreach ($object->lines[$i]->array_options as $extrafieldColKey => $extrafieldValue) {
-							if ($this->getColumnStatus($extrafieldColKey)) {
-								$extrafieldValue = $this->getExtrafieldContent($object->lines[$i], $extrafieldColKey, $outputlangs);
-								$this->printStdColumnContent($pdf, $curY, $extrafieldColKey, $extrafieldValue);
-								$nexY = max($pdf->GetY(), $nexY);
-							}
-						}
+					// "Progession actuelle current"
+					$columkey = 'progress_amount';
+					if ($this->getColumnStatus($columkey)) {
+						$printval = price($object->lines[$i]->total_ht, 0, '', 1, -1, 2);
+						$this->printStdColumnContent($pdf, $curY, $columkey, $printval);
+						$nexY = max($pdf->GetY(), $nexY);
 					}
-
+					// "Progession précédente line"
+					$columkey = 'prev_progress';
+					if ($this->getColumnStatus($columkey)) {
+						$printval = $TInfosLigneSituationPrecedente['progress_prec'].'%';
+						$this->printStdColumnContent($pdf, $curY, $columkey, $printval);
+						$nexY = max($pdf->GetY(), $nexY);
+					}
+					// "Progession précédente"
+					$columkey = 'prev_progress_amount';
+					if ($this->getColumnStatus($columkey)) {
+						$printval = price($TInfosLigneSituationPrecedente['total_ht'], 0, '', 1, -1, 2);
+						$this->printStdColumnContent($pdf, $curY, $columkey, $printval);
+						$nexY = max($pdf->GetY(), $nexY);
+					}
 
 					$parameters = array(
 						'object' => $object,
@@ -941,8 +1041,8 @@ class pdf_octopus extends ModelePDFFactures
 					if ((!isset($localtax1_type) || $localtax1_type == '' || !isset($localtax2_type) || $localtax2_type == '') // if tax type not defined
 						&& (!empty($localtax1_rate) || !empty($localtax2_rate))) { // and there is local tax
 							$localtaxtmp_array = getLocalTaxesFromRate($vatrate, 0, $object->thirdparty, $mysoc);
-							$localtax1_type = isset($localtaxtmp_array[0]) ? $localtaxtmp_array[0] : '';
-							$localtax2_type = isset($localtaxtmp_array[2]) ? $localtaxtmp_array[2] : '';
+						$localtax1_type = isset($localtaxtmp_array[0]) ? $localtaxtmp_array[0] : '';
+						$localtax2_type = isset($localtaxtmp_array[2]) ? $localtaxtmp_array[2] : '';
 					}
 
 					// retrieve global local tax
@@ -982,16 +1082,21 @@ class pdf_octopus extends ModelePDFFactures
 					// Detect if some page were added automatically and output _tableau for past pages
 					while ($pagenb < $pageposafter) {
 						$pdf->setPage($pagenb);
-						if ($pagenb == $pageposbeforeprintlines) {
-							$this->_tableau($pdf, $this->tab_top, $this->page_hauteur - $this->tab_top - $this->heightforfooter, 0, $outputlangs, $hidetop, 1, $object->multicurrency_code, $outputlangsbis);
-						} else {
-							$this->_tableau($pdf, $this->tab_top_newpage, $this->page_hauteur - $this->tab_top_newpage - $this->heightforfooter, 0, $outputlangs, 1, 1, $object->multicurrency_code, $outputlangsbis);
+						$tabtop = $this->tab_top;
+						$tabhauteur = $this->page_hauteur - $tabtop - $this->heightforfooter;
+						if ($pagenb != $pageposbeforeprintlines) {
+							$tabtop = $this->tab_top_newpage;
+							$tabhauteur = $this->page_hauteur - $tabtop - $this->heightforfooter;
+							$hidetop = 1;
 						}
+						$this->_tableau($pdf, $tabtop, $tabhauteur, 0, $outputlangs, $hidetop, 1, $object->multicurrency_code, $outputlangsbis);
+
 						$this->_pagefoot($pdf, $object, $outputlangs, 1);
 						$pagenb++;
 						$pdf->setPage($pagenb);
 						$pdf->setPageOrientation('', 1, 0); // The only function to edit the bottom margin of current page to set it.
 						if (!getDolGlobalInt('MAIN_PDF_DONOTREPEAT_HEAD')) {
+							print "call pagehead 5";
 							$this->_pagehead($pdf, $object, 0, $outputlangs, $outputlangsbis);
 						}
 						if (!empty($tplidx)) {
@@ -1000,32 +1105,37 @@ class pdf_octopus extends ModelePDFFactures
 					}
 
 					if (isset($object->lines[$i + 1]->pagebreak) && $object->lines[$i + 1]->pagebreak) {
-						if ($pagenb == $pageposafter) {
-							$this->_tableau($pdf, $this->tab_top, $this->page_hauteur - $this->tab_top - $this->heightforfooter, 0, $outputlangs, $hidetop, 1, $object->multicurrency_code, $outputlangsbis);
-						} else {
-							$this->_tableau($pdf, $this->tab_top_newpage, $this->page_hauteur - $this->tab_top_newpage - $this->heightforfooter, 0, $outputlangs, 1, 1, $object->multicurrency_code, $outputlangsbis);
+						$tabtop = $this->tab_top;
+						$tabhauteur = $this->page_hauteur - $tabtop - $this->heightforfooter;
+						if ($pagenb != $pageposbeforeprintlines) {
+							$tabtop = $this->tab_top_newpage;
+							$tabhauteur = $this->page_hauteur - $tabtop - $this->heightforfooter;
+							$hidetop = 1;
 						}
+						$this->_tableau($pdf, $tabtop, $tabhauteur, 0, $outputlangs, $hidetop, 1, $object->multicurrency_code, $outputlangsbis);
+
 						$this->_pagefoot($pdf, $object, $outputlangs, 1);
 						// New page
+						print "call addpage 8";
 						$pdf->AddPage();
 						if (!empty($tplidx)) {
 							$pdf->useTemplate($tplidx);
 						}
 						$pagenb++;
 						if (!getDolGlobalInt('MAIN_PDF_DONOTREPEAT_HEAD')) {
+							print "call pagehead 6";
 							$this->_pagehead($pdf, $object, 0, $outputlangs, $outputlangsbis);
 						}
 					}
 				}
 
 				// Show square
-				if ($pagenb == $pageposbeforeprintlines) {
-					$this->_tableau($pdf, $this->tab_top, $this->page_hauteur - $this->tab_top - $this->heightforinfotot - $this->heightforfreetext - $this->heightforfooter, 0, $outputlangs, $hidetop, 0, $object->multicurrency_code, $outputlangsbis);
-					$bottomlasttab = $this->page_hauteur - $this->heightforinfotot - $this->heightforfreetext - $this->heightforfooter + 1;
-				} else {
-					$this->_tableau($pdf, $this->tab_top_newpage, $this->page_hauteur - $this->tab_top_newpage - $this->heightforinfotot - $this->heightforfreetext - $this->heightforfooter, 0, $outputlangs, 1, 0, $object->multicurrency_code, $outputlangsbis);
-					$bottomlasttab = $this->page_hauteur - $this->heightforinfotot - $this->heightforfreetext - $this->heightforfooter + 1;
-				}
+				// special for situation invoices
+				$tabtop = $this->tab_top_newpage;
+				$tabhauteur = $this->page_hauteur - $tabtop - $this->heightforfooter - $this->heightforinfotot - $this->heightforfreetext;
+				$this->_tableau($pdf, $tabtop, $tabhauteur, 0, $outputlangs, $hidetop, 1, $object->multicurrency_code, $outputlangsbis);
+
+				$bottomlasttab = $tabtop + $tabhauteur + $tabTitleHeight + 10;
 
 				// Display infos area
 				$posy = $this->drawInfoTable($pdf, $object, $bottomlasttab, $outputlangs, $outputlangsbis);
@@ -1379,7 +1489,7 @@ class pdf_octopus extends ModelePDFFactures
 				}
 			}
 
-					// Show payment mode CHQ
+			// Show payment mode CHQ
 			if (empty($object->mode_reglement_code) || $object->mode_reglement_code == 'CHQ') {
 				// If payment mode unregulated or payment mode forced to CHQ
 				if (!empty($conf->global->FACTURE_CHQ_NUMBER)) {
@@ -1417,7 +1527,7 @@ class pdf_octopus extends ModelePDFFactures
 				}
 			}
 
-					// If payment mode not forced or forced to VIR, show payment with BAN
+			// If payment mode not forced or forced to VIR, show payment with BAN
 			if (empty($object->mode_reglement_code) || $object->mode_reglement_code == 'VIR') {
 				if ($object->fk_account > 0 || $object->fk_bank > 0 || getDolGlobalInt('FACTURE_RIB_NUMBER')) {
 					$bankid = ($object->fk_account <= 0 ? $conf->global->FACTURE_RIB_NUMBER : $object->fk_account);
@@ -1463,7 +1573,7 @@ class pdf_octopus extends ModelePDFFactures
 
 		$default_font_size = pdf_getPDFFontSize($outputlangs);
 
-		$tab2_top = $posy;
+		$tab2_top = $posy -4;
 		$tab2_hl = 4;
 		if (is_object($outputlangsbis)) {	// When we show 2 languages we need more room for text, so we use a smaller font.
 			$pdf->SetFont('', '', $default_font_size - 2);
@@ -1472,11 +1582,11 @@ class pdf_octopus extends ModelePDFFactures
 		}
 
 		// Total table
-		$col1x = 120;
-		$col2x = 170;
+		$col1x = 90;
+		$col1xret = $col1x+4; //petit retrait pour les sous totaux, taxes etc.
+		$col2x = 180;
 		if ($this->page_largeur < 210) { // To work with US executive format
-			$col1x -= 15;
-			$col2x -= 10;
+			$col2x-=20;
 		}
 		$largcol2 = ($this->page_largeur - $this->marge_droite - $col2x);
 
@@ -1491,179 +1601,162 @@ class pdf_octopus extends ModelePDFFactures
 		$hookmanager->executeHooks('beforePercentCalculation', $parameters, $this); // Note that $object may have been modified by hook
 
 		// overall percentage of advancement
-		$percent = 0;
-		$i = 0;
-		foreach ($object->lines as $line) {
-			$percent += $line->situation_percent;
-			$i++;
+		if (empty($object->tab_previous_situation_invoice)) {
+			$object->fetchPreviousNextSituationInvoice();
 		}
+		$TPreviousInvoices = $object->tab_previous_situation_invoice;
 
-		if (!empty($i)) {
-			$avancementGlobal = $percent / $i;
-		} else {
-			$avancementGlobal = 0;
-		}
 
-		$object->fetchPreviousNextSituationInvoice();
-		$TPreviousIncoice = $object->tab_previous_situation_invoice;
-
-		$total_a_payer = 0;
-		$total_a_payer_ttc = 0;
-		foreach ($TPreviousIncoice as &$fac) {
-			$total_a_payer += $fac->total_ht;
-			$total_a_payer_ttc += $fac->total_ttc;
-		}
-		$total_a_payer += $object->total_ht;
-		$total_a_payer_ttc += $object->total_ttc;
-
-		if (!empty($avancementGlobal)) {
-			$total_a_payer = $total_a_payer * 100 / $avancementGlobal;
-			$total_a_payer_ttc = $total_a_payer_ttc * 100 / $avancementGlobal;
-		} else {
-			$total_a_payer = 0;
-			$total_a_payer_ttc = 0;
-		}
-
+		$deja_paye = 0;
 		$i = 1;
-		if (!empty($TPreviousIncoice)) {
+		if (!empty($TPreviousInvoices)) {
 			$pdf->setY($tab2_top);
 			$posy = $pdf->GetY();
+			$total_avancement_chantier_ht = 0;
 
-			foreach ($TPreviousIncoice as &$fac) {
-				if ($posy > $this->page_hauteur - 4 - $this->heightforfooter) {
+			$listToDisplay = array();
+
+			//pour pouvoir afficher le total avant les lignes il faut lancer la boucle
+			foreach ($TPreviousInvoices as &$previousInvoice) {
+				if ($posy  > ($this->page_hauteur - $this->marge_basse)) {
 					$this->_pagefoot($pdf, $object, $outputlangs, 1);
+					print "call addpage 9";
 					$pdf->addPage();
-					if (!getDolGlobalInt('MAIN_PDF_DONOTREPEAT_HEAD')) {
-						$this->_pagehead($pdf, $object, 0, $outputlangs, $outputlangsbis);
-						$pdf->setY($this->tab_top_newpage);
-					} else {
-						$pdf->setY($this->marge_haute);
-					}
+					$pdf->setY($this->marge_haute);
 					$posy = $pdf->GetY();
 				}
 
-				// Cumulate preceding VAT
-				$index++;
-				$pdf->SetFillColor(255, 255, 255);
-				$pdf->SetXY($col1x, $posy);
-				$pdf->MultiCell($col2x - $col1x, $tab2_hl, $outputlangs->transnoentities("PDFSituationTitle", $fac->situation_counter).' '.$outputlangs->transnoentities("TotalHT"), 0, 'L', 1);
-
-				$pdf->SetXY($col2x, $posy);
-
-				$facSign = '';
-				if ($i > 1) {
-					$facSign = $fac->total_ht >= 0 ? '+' : '';
-				}
-
-				$displayAmount = ' '.$facSign.' '.price($fac->total_ht, 0, $outputlangs);
-
-				$pdf->MultiCell($largcol2, $tab2_hl, $displayAmount, 0, 'R', 1);
-
+				$label = $outputlangs->transnoentities("BtpSituationNumberWithDate", $previousInvoice->situation_counter, $previousInvoice->ref, dol_print_date($previousInvoice->date, "%d/%m/%Y"));
+				$listToDisplay[$label] = $previousInvoice->total_ht;
+				$total_avancement_chantier_ht += $previousInvoice->total_ht;
 				$i++;
-				$posy += $tab2_hl;
-
-				$pdf->setY($posy);
 			}
 
-			// Display current total
-			$pdf->SetFillColor(255, 255, 255);
+			//le total du chantier doit inclure la facture en cours
+			$total_avancement_chantier_ht += $object->total_ht;
+
+			//total du devis lié à la série (donc montant total du marché)
+			$i = 1;
+			$totalProjectAmount = $propalRef = null;
+			if (isset($object->linkedObjects['propal'])) {
+				$propalArray = $object->linkedObjects['propal'];
+				foreach ($propalArray as $propalNumber => $propal) {
+					$totalProjectAmount += $propal->total_ht;
+					$propalRef = $propal->ref;
+				}
+			}
+			$pdf->SetFont('', '', $default_font_size - 1);
+			$pdf->SetFillColor(248, 248, 248);
 			$pdf->SetXY($col1x, $posy);
-			$pdf->MultiCell($col2x - $col1x, $tab2_hl, $outputlangs->transnoentities("PDFSituationTitle", $object->situation_counter).' '.$outputlangs->transnoentities("TotalHT"), 0, 'L', 1);
-
+			$pdf->MultiCell($col2x-$col1x, $tab2_hl, $outputlangs->transnoentities("BtpTotalPropal", $propalRef), 0, 'L', 1); //pas d'$avancementGlobal
 			$pdf->SetXY($col2x, $posy);
-			$facSign = '';
-			if ($i > 1) {
-				$facSign = $object->total_ht >= 0 ? '+' : ''; // management of a particular customer case
-			}
-
-			if ($fac->type === facture::TYPE_CREDIT_NOTE) {
-				$facSign = '-'; // les avoirs
-			}
-
-
-			$displayAmount = ' '.$facSign.' '.price($object->total_ht, 0, $outputlangs);
-			$pdf->MultiCell($largcol2, $tab2_hl, $displayAmount, 0, 'R', 1);
-
+			$pdf->MultiCell($largcol2, $tab2_hl, price($total_avancement_chantier_ht, 0, $outputlangs, 1, -1, 2), 0, 'R', 1);
 			$posy += $tab2_hl;
+			//---------
+
 
 			// Display all total
-			$pdf->SetFont('', '', $default_font_size - 1);
-			$pdf->SetFillColor(255, 255, 255);
+			$pdf->SetFont('', 'B', $default_font_size - 1);
+			$pdf->SetFillColor(248, 248, 248);
 			$pdf->SetXY($col1x, $posy);
-			$pdf->MultiCell($col2x - $col1x, $tab2_hl, $outputlangs->transnoentities("SituationTotalProgress", $avancementGlobal), 0, 'L', 1);
-
+			$pdf->MultiCell($col2x-$col1x, $tab2_hl, $outputlangs->transnoentities("BtpTotalWork"), 0, 'L', 1); //pas d'$avancementGlobal
 			$pdf->SetXY($col2x, $posy);
-			$pdf->MultiCell($largcol2, $tab2_hl, price($total_a_payer * $avancementGlobal / 100, 0, $outputlangs), 0, 'R', 1);
-			$pdf->SetFont('', '', $default_font_size - 2);
-
+			$pdf->MultiCell($largcol2, $tab2_hl, price($total_avancement_chantier_ht, 0, $outputlangs, 1, -1, 2), 0, 'R', 1);
 			$posy += $tab2_hl;
+			//---------
 
-			if ($posy > $this->page_hauteur - 4 - $this->heightforfooter) {
-				$pdf->addPage();
-				if (!getDolGlobalInt('MAIN_PDF_DONOTREPEAT_HEAD')) {
-					$this->_pagehead($pdf, $object, 0, $outputlangs, $outputlangsbis);
-					$pdf->setY($this->tab_top_newpage);
-				} else {
-					$pdf->setY($this->marge_haute);
+
+			// Display history
+			foreach ($listToDisplay as $label => $amount) {
+				$pdf->SetFont('', 'I', $default_font_size - 2);
+				$pdf->SetFillColor(255, 255, 255);
+				if ($index % 2) {
+					$pdf->SetFillColor(248, 248, 248);
 				}
+				$pdf->SetXY($col1xret, $posy);
+				$pdf->MultiCell($col2x-$col1xret, $tab2_hl, $label, 0, 'L', 1);
+				$pdf->SetXY($col2x, $posy);
+				$facSign = '';
+				if ($i>1) {
+					$facSign = $amount>=0 ? '' : '';
+				}
+				$displayAmount = ' '.$facSign.' '.price($amount, 0, $outputlangs, 1, -1, 2);
+				$pdf->MultiCell($largcol2, $tab2_hl, $displayAmount, 0, 'R', 1);
+				$posy += $tab2_hl;
+				$pdf->setY($posy);
+				$index++;
+			}
+			//---------
 
+			// Display current total
+			$pdf->SetFont('', 'I', $default_font_size - 2);
+			$pdf->SetFillColor(255, 255, 255);
+			if ($index % 2) {
+				$pdf->SetFillColor(248, 248, 248);
+			}
+			$pdf->SetXY($col1xret, $posy);
+			$pdf->MultiCell($col2x-$col1x+4, $tab2_hl, $outputlangs->transnoentities("BtpSituationNumberWithDate", $object->situation_counter, $object->ref, dol_print_date($object->date, "%d/%m/%Y")), 0, 'L', 1);
+			$pdf->SetXY($col2x, $posy);
+			$facSign = '';
+			if ($i>1) {
+				$facSign = $object->total_ht =0 ? '' : ''; // gestion d'un cas particulier client
+			}
+			if ($previousInvoice->type === facture::TYPE_CREDIT_NOTE) {
+				$facSign = '-'; // les avoirs
+			}
+			$displayAmount = ' '.$facSign.' '.price($object->total_ht, 0, $outputlangs, 1, -1, 2);
+			$pdf->MultiCell($largcol2, $tab2_hl, $displayAmount, 0, 'R', 1);
+			$posy += $tab2_hl;
+			//---------
+
+
+			if ($posy  > ($this->page_hauteur - $this->marge_basse)) {
+				print "call addpage 10";
+				$pdf->addPage();
+				$pdf->setY($this->marge_haute);
 				$posy = $pdf->GetY();
 			}
-
-			$tab2_top = $posy;
-			$index = 0;
-
-			$tab2_top += 3;
+			$tab2_top = $posy + 3;
+			$index=0;
 		}
 
+		$pdf->SetFont('', '', $default_font_size - 2);
+		$pdf->SetFillColor(255, 255, 255);
+		$pdf->SetXY($col1x, $tab2_top + 0);
+		$pdf->MultiCell($col2x-$col1x, $tab2_hl, "Cette facture:", 0, 'L', 1);
+		$tab2_top += $tab2_hl;
 
-		// Get Total HT
-		$total_ht = (isModEnabled("multicurrency") && $object->mylticurrency_tx != 1 ? $object->multicurrency_total_ht : $object->total_ht);
+		$pdf->SetFont('', '', $default_font_size - 1);
 
-		// Total remise
-		$total_line_remise = 0;
-		foreach ($object->lines as $i => $line) {
-			$total_line_remise += (float) pdfGetLineTotalDiscountAmount($object, $i, $outputlangs, 2); // TODO: add this method to core/lib/pdf.lib
-			// Gestion remise sous forme de ligne négative
-			if ($line->total_ht < 0) {
-				$total_line_remise += -$line->total_ht;
-			}
-		}
-		if ($total_line_remise > 0) {
-			if (!empty($conf->global->MAIN_SHOW_AMOUNT_DISCOUNT)) {
-				$pdf->SetFillColor(255, 255, 255);
-				$pdf->SetXY($col1x, $tab2_top + $tab2_hl);
-				$pdf->MultiCell($col2x - $col1x, $tab2_hl, $outputlangs->transnoentities("TotalDiscount").(is_object($outputlangsbis) ? ' / '.$outputlangsbis->transnoentities("TotalDiscount") : ''), 0, 'L', 1);
-				$pdf->SetXY($col2x, $tab2_top + $tab2_hl);
-				$pdf->MultiCell($largcol2, $tab2_hl, price($total_line_remise, 0, $outputlangs), 0, 'R', 1);
-
-				$index++;
-			}
-			// Show total NET before discount
-			if (!empty($conf->global->MAIN_SHOW_AMOUNT_BEFORE_DISCOUNT)) {
-				$pdf->SetFillColor(255, 255, 255);
-				$pdf->SetXY($col1x, $tab2_top);
-				$pdf->MultiCell($col2x - $col1x, $tab2_hl, $outputlangs->transnoentities("TotalHTBeforeDiscount").(is_object($outputlangsbis) ? ' / '.$outputlangsbis->transnoentities("TotalHTBeforeDiscount") : ''), 0, 'L', 1);
-				$pdf->SetXY($col2x, $tab2_top);
-				$pdf->MultiCell($largcol2, $tab2_hl, price($total_line_remise + $total_ht, 0, $outputlangs), 0, 'R', 1);
-
-				$index++;
-			}
-		}
+		// Total HT xxx, soit HT Net =
+		$txt = $outputlangs->transnoentities(
+			"TotalHT",
+			price($object->total_ht, 0, $outputlangs, 1, -1, 2, 'auto')
+		);
+		$txt1 = $outputlangs->transnoentities("BtpTotHt");
+		$largTxt = $pdf->GetStringWidth($txt1)+1;
 
 		// Total HT
 		$pdf->SetFillColor(255, 255, 255);
-		$pdf->SetXY($col1x, $tab2_top + $tab2_hl * $index);
-		$pdf->MultiCell($col2x - $col1x, $tab2_hl, $outputlangs->transnoentities(empty($conf->global->MAIN_GENERATE_DOCUMENTS_WITHOUT_VAT) ? "TotalHT" : "Total").(is_object($outputlangsbis) ? ' / '.$outputlangsbis->transnoentities(empty($conf->global->MAIN_GENERATE_DOCUMENTS_WITHOUT_VAT) ? "TotalHT" : "Total") : ''), 0, 'L', 1);
+		$pdf->SetFont('', 'B', $default_font_size - 1);
+		$pdf->SetXY($col1x, $tab2_top + 0);
+		$pdf->MultiCell($col2x-$col1x-$largTxt, $tab2_hl, $txt1, 0, 'L', 1);
+		$pdf->SetFont('', 'I', $default_font_size - 2);
+		$pdf->SetXY($col1x+$largTxt, $tab2_top + 0);
+		$pdf->MultiCell($col2x-$col1x, $tab2_hl, $txt, 0, 'L', 1);
+		$pdf->SetFont('', 'B', $default_font_size - 1);
 
-		$total_ht = ((isModEnabled("multicurrency") && isset($object->multicurrency_tx) && $object->multicurrency_tx != 1) ? $object->multicurrency_total_ht : $object->total_ht);
-		$pdf->SetXY($col2x, $tab2_top + $tab2_hl * $index);
-		$pdf->MultiCell($largcol2, $tab2_hl, price($sign * ($total_ht + (!empty($object->remise) ? $object->remise : 0)), 0, $outputlangs), 0, 'R', 1);
+		//$total_ht = ($conf->multicurrency->enabled && $object->multicurrency_tx != 1 ? $object->multicurrency_total_ht : $object->total_ht);
+		$total_ht = $invoiceDetails['HTnet'];
+		$pdf->SetXY($col2x, $tab2_top + 0);
+		$pdf->MultiCell($largcol2, $tab2_hl, price($sign * ($total_ht + (! empty($object->remise) ? $object->remise : 0)), 0, $outputlangs, 1, -1, 2), 0, 'R', 1);
 
 		// Show VAT by rates and total
 		$pdf->SetFillColor(248, 248, 248);
+		$pdf->SetFont('', '', $default_font_size - 1);
 
-		$total_ttc = (isModEnabled("multicurrency") && $object->multicurrency_tx != 1) ? $object->multicurrency_total_ttc : $object->total_ttc;
+		//$total_ttc = ($conf->multicurrency->enabled && $object->multicurrency_tx != 1) ? $object->multicurrency_total_ttc : $object->total_ttc;
+		$total_ttc = $invoiceDetails['TTC'];
 
 		$this->atleastoneratenotnull = 0;
 		if (empty($conf->global->MAIN_GENERATE_DOCUMENTS_WITHOUT_VAT)) {
@@ -1873,7 +1966,8 @@ class pdf_octopus extends ModelePDFFactures
 				$pdf->MultiCell($col2x - $col1x, $tab2_hl, $outputlangs->transnoentities("TotalTTC").(is_object($outputlangsbis) ? ' / '.$outputlangsbis->transnoentities("TotalTTC") : ''), $useborder, 'L', 1);
 
 				$pdf->SetXY($col2x, $tab2_top + $tab2_hl * $index);
-				$pdf->MultiCell($largcol2, $tab2_hl, price($sign * $total_ttc, 0, $outputlangs), $useborder, 'R', 1);
+				$pdf->MultiCell($largcol2, $tab2_hl, price($sign * $total_ttc, 0, $outputlangs, 1, -1, 2), $useborder, 'R', 1);
+				$pdf->SetFont('', '');
 
 
 				// Retained warranty
@@ -1966,7 +2060,7 @@ class pdf_octopus extends ModelePDFFactures
 		return ($tab2_top + ($tab2_hl * $index));
 	}
 
-	// phpcs:disable PEAR.NamingConventions.ValidFunctionName.ScopeNotCamelCaps
+    // phpcs:disable PEAR.NamingConventions.ValidFunctionName.ScopeNotCamelCaps
 	/**
 	 *  Return list of active generation modules
 	 *
@@ -1976,11 +2070,11 @@ class pdf_octopus extends ModelePDFFactures
 	 */
 	public static function liste_modeles($db, $maxfilenamelength = 0)
 	{
-		// phpcs:enable
+        // phpcs:enable
 		return parent::liste_modeles($db, $maxfilenamelength); // TODO: Change the autogenerated stub
 	}
 
-	// phpcs:disable PEAR.NamingConventions.ValidFunctionName.PublicUnderscore
+    // phpcs:disable PEAR.NamingConventions.ValidFunctionName.PublicUnderscore
 	/**
 	 *   Show table for lines
 	 *
@@ -1997,13 +2091,11 @@ class pdf_octopus extends ModelePDFFactures
 	 */
 	protected function _tableau(&$pdf, $tab_top, $tab_height, $nexY, $outputlangs, $hidetop = 0, $hidebottom = 0, $currency = '', $outputlangsbis = null)
 	{
-		global $conf;
+		global $conf, $object;
 
 		// Force to disable hidetop and hidebottom
-		$hidebottom = 0;
-		if ($hidetop) {
-			$hidetop = -1;
-		}
+		$hidebottom=0;
+		$hidetop=0;
 
 		$currency = !empty($currency) ? $currency : $conf->currency;
 		$default_font_size = pdf_getPDFFontSize($outputlangs);
@@ -2013,42 +2105,66 @@ class pdf_octopus extends ModelePDFFactures
 		$pdf->SetFont('', '', $default_font_size - 2);
 
 		if (empty($hidetop)) {
-			// Show category of operations
-			if (getDolGlobalInt('INVOICE_CATEGORY_OF_OPERATION') == 1 && $this->categoryOfOperation >= 0) {
-				$categoryOfOperations = $outputlangs->transnoentities("MentionCategoryOfOperations") . ' : ' . $outputlangs->transnoentities("MentionCategoryOfOperations" . $this->categoryOfOperation);
-				$pdf->SetXY($this->marge_gauche, $tab_top - 4);
-				$pdf->MultiCell(($pdf->GetStringWidth($categoryOfOperations)) + 4, 2, $categoryOfOperations);
-			}
-
 			$titre = $outputlangs->transnoentities("AmountInCurrency", $outputlangs->transnoentitiesnoconv("Currency".$currency));
-			if (!empty($conf->global->PDF_USE_ALSO_LANGUAGE_CODE) && is_object($outputlangsbis)) {
-				$titre .= ' - '.$outputlangsbis->transnoentities("AmountInCurrency", $outputlangsbis->transnoentitiesnoconv("Currency".$currency));
-			}
-
-			$pdf->SetXY($this->page_largeur - $this->marge_droite - ($pdf->GetStringWidth($titre) + 3), $tab_top - 4);
+			$pdf->SetXY($this->page_largeur - $this->marge_droite - ($pdf->GetStringWidth($titre) + 3), $tab_top-4);
 			$pdf->MultiCell(($pdf->GetStringWidth($titre) + 3), 2, $titre);
 
 			//$conf->global->MAIN_PDF_TITLE_BACKGROUND_COLOR='230,230,230';
-			if (!empty($conf->global->MAIN_PDF_TITLE_BACKGROUND_COLOR)) {
-				$pdf->Rect($this->marge_gauche, $tab_top, $this->page_largeur - $this->marge_droite - $this->marge_gauche, $this->tabTitleHeight, 'F', null, explode(',', $conf->global->MAIN_PDF_TITLE_BACKGROUND_COLOR));
+			if (! empty($conf->global->MAIN_PDF_TITLE_BACKGROUND_COLOR)) {
+				$pdf->Rect($this->marge_gauche, $tab_top, $this->page_largeur-$this->marge_droite-$this->marge_gauche, 5, 'F', null, explode(',', $conf->global->MAIN_PDF_TITLE_BACKGROUND_COLOR));
 			}
+			$tab_top+=4;
 		}
 
 		$pdf->SetDrawColor(128, 128, 128);
 		$pdf->SetFont('', '', $default_font_size - 1);
 
 		// Output Rect
-		$this->printRect($pdf, $this->marge_gauche, $tab_top, $this->page_largeur - $this->marge_gauche - $this->marge_droite, $tab_height, $hidetop, $hidebottom); // Rect takes a length in 3rd parameter and 4th parameter
+		$this->printRect($pdf, $this->marge_gauche, $tab_top, $this->page_largeur-$this->marge_gauche-$this->marge_droite, $tab_height, $hidetop, $hidebottom);	// Rect prend une longueur en 3eme param et 4eme param
 
+		// situation invoice
+		$pdf->SetFont('', '', $default_font_size - 2);
 
-		$this->pdfTabTitles($pdf, $tab_top, $tab_height, $outputlangs, $hidetop);
+		foreach ($this->cols as $colKey => $colDef) {
+			if (!$this->getColumnStatus($colKey)) {
+				continue;
+			}
+
+			//is there any overtitle ?
+			$overtitle = $colDef['overtitle']['textkey'] ?? '';
+			if ($overtitle) {
+				$overtitle_top = $tab_top - 4;
+				$textWidth = $colDef['overtitle']['width'];
+				$pdf->SetXY($colDef['xStartPos'] + $colDef['overtitle']['padding'][3], $overtitle_top);
+				$pdf->MultiCell($textWidth, 2, $overtitle, '', $colDef['overtitle']['align']);
+				$pdf->line($colDef['xStartPos'], $overtitle_top, $colDef['xStartPos'], $overtitle_top + 4); //left
+				$pdf->line($colDef['xStartPos'], $overtitle_top, $colDef['xStartPos'] + $textWidth, $overtitle_top); //top
+				$pdf->line($colDef['xStartPos'] + $textWidth, $overtitle_top, $colDef['xStartPos'] + $textWidth, $overtitle_top + 4); //right
+			}
+
+			// get title label
+			$colDef['title']['label'] = !empty($colDef['title']['label']) ? $colDef['title']['label'] : $outputlangs->transnoentities($colDef['title']['textkey']);
+
+			// Add column separator
+			if (!empty($colDef['border-left'])) {
+				$pdf->line($colDef['xStartPos'], $tab_top, $colDef['xStartPos'], $tab_top + $tab_height);
+			}
+
+			if (empty($hidetop)) {
+				$pdf->SetXY($colDef['xStartPos'] + $colDef['title']['padding'][3], $tab_top + $colDef['title']['padding'][0]);
+
+				$textWidth = $colDef['width'] - $colDef['title']['padding'][3] -$colDef['title']['padding'][1];
+				$pdf->MultiCell($textWidth, 2, $colDef['title']['label'], '', $colDef['title']['align']);
+			}
+		}
+		$pdf->SetFont('', '', $default_font_size - 1);
 
 		if (empty($hidetop)) {
-			$pdf->line($this->marge_gauche, $tab_top + $this->tabTitleHeight, $this->page_largeur - $this->marge_droite, $tab_top + $this->tabTitleHeight); // line takes a position y in 2nd parameter and 4th parameter
+			$pdf->line($this->marge_gauche, $tab_top+5, $this->page_largeur-$this->marge_droite, $tab_top+5);	// line prend une position y en 2eme param et 4eme param
 		}
 	}
 
-	// phpcs:disable PEAR.NamingConventions.ValidFunctionName.PublicUnderscore
+    // phpcs:disable PEAR.NamingConventions.ValidFunctionName.PublicUnderscore
 	/**
 	 *  Show top header of page. This include the logo, ref and address blocs
 	 *
@@ -2064,7 +2180,9 @@ class pdf_octopus extends ModelePDFFactures
 		global $conf, $langs;
 
 		$ltrdirection = 'L';
-		if ($outputlangs->trans("DIRECTION") == 'rtl') $ltrdirection = 'R';
+		if ($outputlangs->trans("DIRECTION") == 'rtl') {
+			$ltrdirection = 'R';
+		}
 
 		// Load traductions files required by page
 		$outputlangs->loadLangs(array("main", "bills", "propal", "companies"));
@@ -2113,6 +2231,7 @@ class pdf_octopus extends ModelePDFFactures
 		$pdf->SetFont('', 'B', $default_font_size + 3);
 		$pdf->SetXY($posx, $posy);
 		$pdf->SetTextColor(0, 0, 60);
+		$subtitle = "";
 		$title = $outputlangs->transnoentities("PdfInvoiceTitle");
 		if ($object->type == 1) {
 			$title = $outputlangs->transnoentities("InvoiceReplacement");
@@ -2128,6 +2247,7 @@ class pdf_octopus extends ModelePDFFactures
 		}
 		if ($this->situationinvoice) {
 			$title = $outputlangs->transnoentities("PDFInvoiceSituation");
+			$subtitle = $outputlangs->transnoentities("BtpTitle", $object->situation_counter);
 		}
 		if (!empty($conf->global->PDF_USE_ALSO_LANGUAGE_CODE) && is_object($outputlangsbis)) {
 			$title .= ' - ';
@@ -2153,6 +2273,12 @@ class pdf_octopus extends ModelePDFFactures
 		}
 
 		$pdf->MultiCell($w, 3, $title, '', 'R');
+		if (!empty($subtitle)) {
+			$pdf->SetFont('', 'B', $default_font_size);
+			$pdf->SetXY($posx, $posy+5);
+			$pdf->MultiCell($w, 6, $subtitle, '', 'R');
+			$posy += 2;
+		}
 
 		$pdf->SetFont('', 'B', $default_font_size);
 
@@ -2423,7 +2549,7 @@ class pdf_octopus extends ModelePDFFactures
 		return $pagehead;
 	}
 
-	// phpcs:disable PEAR.NamingConventions.ValidFunctionName.PublicUnderscore
+    // phpcs:disable PEAR.NamingConventions.ValidFunctionName.PublicUnderscore
 	/**
 	 *   	Show footer of page. Need this->emetteur object
 	 *
@@ -2526,7 +2652,7 @@ class pdf_octopus extends ModelePDFFactures
 		$this->cols['vat'] = array(
 			'rank' => $rank,
 			'status' => false,
-			'width' => 16, // in mm
+			'width' => 10, // in mm
 			'title' => array(
 				'textkey' => 'VAT'
 			),
@@ -2538,9 +2664,23 @@ class pdf_octopus extends ModelePDFFactures
 		}
 
 		$rank = $rank + 10;
+		$this->cols['unit'] = array(
+			'rank' => $rank,
+			'width' => 11, // in mm
+			'status' => false,
+			'title' => array(
+				'textkey' => 'Unit'
+			),
+			'border-left' => true, // add left line separator
+		);
+		if ($conf->global->PRODUCT_USE_UNITS) {
+			$this->cols['unit']['status'] = false;
+		}
+
+		$rank = $rank + 10;
 		$this->cols['subprice'] = array(
 			'rank' => $rank,
-			'width' => 19, // in mm
+			'width' => 17, // in mm
 			'status' => true,
 			'title' => array(
 				'textkey' => 'PriceUHT'
@@ -2562,47 +2702,118 @@ class pdf_octopus extends ModelePDFFactures
 		$rank = $rank + 10;
 		$this->cols['qty'] = array(
 			'rank' => $rank,
-			'width' => 16, // in mm
+			'width' => 10, // in mm
 			'status' => true,
 			'title' => array(
 				'textkey' => 'Qty'
 			),
 			'border-left' => true, // add left line separator
 		);
+		//situation invoices
+		$this->cols['qty']['status'] = true;
 
+		//sum column
+		$rank = $rank + 10;
+		$this->cols['btpsomme'] = array(
+			'rank' => $rank,
+			'width' => 18, // in mm
+			'status' => false,
+			'title' => array(
+				'textkey' => 'BtpTotHt'
+			),
+			'border-left' => true, // add left line separator
+			'overtitle' => array(
+				'textkey' => 'Chantier', // use lang key is usefull in somme case with module
+				'align' => 'C',
+				'padding' => array(0.5,0.5,0.5,0.5), // Like css 0 => top , 1 => right, 2 => bottom, 3 => left
+				'width' => 18
+			),
+		);
+		if (!empty($this->TDataSituation['date_derniere_situation'])) {
+			$this->cols['btpsomme']['status'] = true;
+		}
+
+		$derniere_situation = $this->TDataSituation['derniere_situation'];
+
+		if (empty($derniere_situation)) {
+			$derniere_situation = 0;
+		}
+
+		// Colonne "Pourcentage Progression précédente"
+		$rank = $rank + 10;
+		$this->cols['prev_progress'] = array(
+			'rank' => $rank,
+			'width' => 10, // in mm
+			'status' => false,
+			'title' => array(
+				'textkey' => $outputlangs->transnoentities('BtpProgressColTitle', $derniere_situation->situation_counter)
+			),
+			'border-left' => true, // add left line separator
+			'overtitle' => array(
+				'textkey' => $outputlangs->transnoentities('BtpSituationDate', $derniere_situation->situation_counter, dol_print_date($derniere_situation->date, "%d/%m/%Y")), // use lang key is usefull in somme case with module
+				'align' => 'C',
+				'padding' => array(0.5,0.2,0.5,0.2), // Like css 0 => top , 1 => right, 2 => bottom, 3 => left
+				'width' => 10+15 //current width + amount cell width
+			),
+		);
+		if ($this->situationinvoice && ! empty($this->TDataSituation['date_derniere_situation'])) {
+			$this->cols['prev_progress']['status'] = true;
+		}
+
+		// Colonne "Progression précédente"
+		$rank = $rank + 10;
+		$this->cols['prev_progress_amount'] = array(
+			'rank' => $rank,
+			'width' => 15, // in mm
+			'status' => false,
+			'title' => array(
+				'textkey' => $outputlangs->transnoentities('BtpAmountColTitle', $derniere_situation->situation_counter)
+			),
+			'border-left' => true, // add left line separator
+		);
+		if ($this->situationinvoice && ! empty($this->TDataSituation['date_derniere_situation'])) {
+			$this->cols['prev_progress_amount']['status'] = true;
+		}
+
+		// Colonne "Pourcentage Progression actuelle"
 		$rank = $rank + 10;
 		$this->cols['progress'] = array(
 			'rank' => $rank,
-			'width' => 19, // in mm
-			'status' => false,
+			'width' => 10, // in mm
+			'status' => true,
 			'title' => array(
-				'textkey' => 'Progress'
+				'textkey' => $outputlangs->transnoentities('BtpProgressColTitle', $object->situation_counter)
 			),
 			'border-left' => true, // add left line separator
+			'overtitle' => array(
+				'textkey' => $outputlangs->transnoentities('BtpSituationDate', $object->situation_counter, dol_print_date($object->date, "%d/%m/%Y")), // use lang key is usefull in somme case with module
+				'align' => 'C',
+				'padding' => array(0.5,0.2,0.5,0.2), // Like css 0 => top , 1 => right, 2 => bottom, 3 => left
+				'width' => 10+15
+			),
 		);
 
-		if ($this->situationinvoice) {
-			$this->cols['progress']['status'] = true;
-		}
-
+		// Colonne "Progression actuelle"
 		$rank = $rank + 10;
-		$this->cols['unit'] = array(
+		$this->cols['progress_amount'] = array(
 			'rank' => $rank,
-			'width' => 11, // in mm
-			'status' => false,
+			'width' => 15, // in mm
+			'status' => true,
 			'title' => array(
-				'textkey' => 'Unit'
+				'textkey' => $outputlangs->transnoentities('BtpAmountColTitle', $object->situation_counter)
 			),
 			'border-left' => true, // add left line separator
 		);
-		if (getDolGlobalInt('PRODUCT_USE_UNITS')) {
-			$this->cols['unit']['status'] = true;
+		if ($this->situationinvoice) {
+			$this->cols['progress_amount']['status'] = true;
 		}
+
+		// FIN BTP SITUATION
 
 		$rank = $rank + 10;
 		$this->cols['discount'] = array(
 			'rank' => $rank,
-			'width' => 13, // in mm
+			'width' => 10, // in mm
 			'status' => false,
 			'title' => array(
 				'textkey' => 'ReductionShort'
@@ -2612,34 +2823,16 @@ class pdf_octopus extends ModelePDFFactures
 		if ($this->atleastonediscount) {
 			$this->cols['discount']['status'] = true;
 		}
-
-		$rank = $rank + 1000; // add a big offset to be sure is the last col because default extrafield rank is 100
+		$rank = $rank + 10;
 		$this->cols['totalexcltax'] = array(
 			'rank' => $rank,
-			'width' => 26, // in mm
-			'status' => empty($conf->global->PDF_PROPAL_HIDE_PRICE_EXCL_TAX) ? true : false,
+			'width' => 18, // in mm
+			'status' => true,
 			'title' => array(
-				'textkey' => 'TotalHT'
+				'textkey' => $outputlangs->transnoentities('BtpTotHt')
 			),
 			'border-left' => true, // add left line separator
 		);
-
-		$rank = $rank + 1010; // add a big offset to be sure is the last col because default extrafield rank is 100
-		$this->cols['totalincltax'] = array(
-			'rank' => $rank,
-			'width' => 26, // in mm
-			'status' => empty($conf->global->PDF_PROPAL_SHOW_PRICE_INCL_TAX) ? false : true,
-			'title' => array(
-				'textkey' => 'TotalTTC'
-			),
-			'border-left' => true, // add left line separator
-		);
-
-		// Add extrafields cols
-		if (!empty($object->lines)) {
-			$line = reset($object->lines);
-			$this->defineColumnExtrafield($line, $outputlangs, $hidedetails);
-		}
 
 		$parameters = array(
 			'object' => $object,
@@ -2657,5 +2850,614 @@ class pdf_octopus extends ModelePDFFactures
 		} else {
 			$this->cols = $hookmanager->resArray;
 		}
+
+		// print "call defineColumnField... cols = " . json_encode($this->cols);exit;
+	}
+
+	/**
+	 *   Show table for lines
+	 *
+	 *   @param		TCPDF			$pdf     		Object PDF
+	 *   @param		string		$tab_top		Top position of table
+	 *   @param		string		$tab_height		Height of table (rectangle)
+	 *   @param		int			$nexY			Y (not used)
+	 *   @param		Translate	$outputlangs	Langs object
+	 *   @param		int			$hidetop		1=Hide top bar of array and title, 0=Hide nothing, -1=Hide only title
+	 *   @param		int			$hidebottom		Hide bottom bar of array
+	 *   @param		string		$currency		Currency code
+	 *   @return	void
+	 */
+	public function _tableFirstPage(&$pdf, $tab_top, $tab_height, $nexY, $outputlangs, $hidetop = 0, $hidebottom = 0, $currency = '')
+	{
+		global $conf, $object, $db;
+
+		$outputlangs->loadLangs(array("btp@btp"));
+		$form = new Form($db);
+
+		$tab_height -= 29; // Réduction de la hauteur global du tableau
+		$displayWarranty = $this->displayRetainedWarranty($object);
+		if (!$displayWarranty) {
+			$tab_height -= 19; // Réduction de la hauteur global du tableau
+		}
+
+
+		// Force to disable hidetop and hidebottom
+		$hidebottom=0;
+		if ($hidetop) {
+			$hidetop=-1;
+		}
+
+		$currency = !empty($currency) ? $currency : $conf->currency;
+		$default_font_size = pdf_getPDFFontSize($outputlangs);
+
+		// Amount in (at tab_top - 1)
+		$pdf->SetTextColor(0, 0, 0);
+		$pdf->SetFont('', '', $default_font_size - 2);
+
+		if (empty($hidetop)) {
+			$titre = $outputlangs->transnoentities("AmountInCurrency", $outputlangs->transnoentitiesnoconv("Currency".$currency));
+			$pdf->SetXY($this->page_largeur - $this->marge_droite - ($pdf->GetStringWidth($titre) + 3), $tab_top-8);
+			$pdf->MultiCell(($pdf->GetStringWidth($titre) + 3), 2, $titre);
+
+			$width = $this->page_largeur-$this->marge_gauche-$this->marge_droite-83;
+
+			//$conf->global->MAIN_PDF_TITLE_BACKGROUND_COLOR='230,230,230';
+			if (! empty($conf->global->MAIN_PDF_TITLE_BACKGROUND_COLOR)) {
+				$pdf->Rect($this->posx_cumul_anterieur-1, $tab_top, $width, 5, 'F', null, explode(',', $conf->global->MAIN_PDF_TITLE_BACKGROUND_COLOR));
+				$pdf->Rect($this->marge_gauche, $tab_top+92.5, $this->page_largeur-$this->marge_gauche-$this->marge_droite, 5, 'F', null, explode(',', $conf->global->MAIN_PDF_TITLE_BACKGROUND_COLOR));
+			}
+		}
+
+		$pdf->SetDrawColor(128, 128, 128);
+		$pdf->SetFont('', '', $default_font_size - 1);
+
+		// Output Rect
+		// KEEPTHIS => Affiche les bords extérieurs
+		$this->printRectBtp($pdf, $this->marge_gauche, $tab_top, $this->page_largeur-$this->marge_gauche-$this->marge_droite, $tab_height, $hidetop, $hidebottom);	// Rect prend une longueur en 3eme param et 4eme param
+
+		$pdf->line($this->posx_cumul_anterieur-1, $tab_top, $this->posx_cumul_anterieur-1, $tab_top + $tab_height);
+		if (empty($hidetop)) {
+			$pdf->SetXY($this->posx_cumul_anterieur-1, $tab_top+0.5);
+			$pdf->MultiCell(35, 2, $outputlangs->transnoentities("BtpAnteCumul"), '', 'C');
+		}
+
+		// PRINT COLUMNS TITLES
+		$pdf->line($this->posx_new_cumul-1, $tab_top, $this->posx_new_cumul-1, $tab_top + $tab_height);
+		if (empty($hidetop)) {
+			$pdf->SetXY($this->posx_new_cumul-1, $tab_top+0.5);
+			$pdf->MultiCell(35, 2, $outputlangs->transnoentities("BtpNewCumul"), '', 'C');
+		}
+
+		$pdf->line($this->posx_current-1, $tab_top, $this->posx_current-1, $tab_top + $tab_height);
+		if (empty($hidetop)) {
+			$pdf->SetXY($this->posx_current-1, $tab_top+0.5);
+			$pdf->MultiCell(36, 2, $outputlangs->transnoentities("BtpCurrentSituation", $object->situation_counter), '', 'C');
+		}
+
+		// ADD HORIZONTALE LINES
+		$pdf->line($this->posx_cumul_anterieur-1, $tab_top+5, $this->page_largeur-$this->marge_droite, $tab_top+5);
+
+		$pdf->line($this->posx_cumul_anterieur-1, $tab_top+24, $this->page_largeur-$this->marge_droite, $tab_top+24);
+
+		$pdf->line($this->marge_gauche, $tab_top+55, $this->page_largeur-$this->marge_droite, $tab_top+55);
+
+		$pdf->line($this->marge_gauche, $tab_top + 65, $this->page_largeur - $this->marge_droite, $tab_top + 65);
+
+		if ($displayWarranty) {
+			$pdf->line($this->marge_gauche, $tab_top+85, $this->page_largeur-$this->marge_droite, $tab_top+85);
+		}
+
+
+		// ADD TEXT INTO CELL
+		/**********************Titres*******************************/
+		$pdf->SetXY($this->marge_gauche+2, $tab_top+8);
+		$pdf->MultiCell(60, 2, $outputlangs->transnoentities("BtpMainWork"), '', 'L');
+
+		$pdf->SetXY($this->marge_gauche+2, $tab_top+12);
+		$pdf->MultiCell(60, 2, $outputlangs->transnoentities("BtpAdditionalWork"), '', 'L');
+
+		$form->load_cache_vatrates("'".$object->thirdparty->country_code."'");
+
+		$i = -8;
+		foreach ($form->cache_vatrates as $TVatInfo) {
+			$tva_tx_formated = sprintf("%01.3f", $TVatInfo['txtva']);
+			// print "<p>Un taux de tva ... $tva_tx_formated :: " . json_encode($this->TDataSituation['current'][$tva_tx_formated]) . "</p>";
+			if (empty($this->TDataSituation['current'][$tva_tx_formated])) {
+				continue;
+			}
+			$i += 8;
+
+			$pdf->SetXY($this->marge_gauche+10, $tab_top+24 + $i);
+			$pdf->MultiCell(80, 2, $outputlangs->transnoentities("TotalHT").' '.$TVatInfo['label'], '', 'L');
+
+			if (! empty($this->TDataSituation['current'][$tva_tx_formated]['TVA'])) {
+				$pdf->SetXY($this->marge_gauche + 10, $tab_top + 28 + $i);
+				$pdf->MultiCell(80, 2, $outputlangs->transnoentities("VAT").' '.$TVatInfo['label'], '', 'L');
+			} else {
+				$i -= 4;
+			}
+		}
+
+		$pdf->SetXY($this->marge_gauche+2, $tab_top+33+$i);
+		$pdf->MultiCell(80, 2, $outputlangs->transnoentities("TotalTTC"), '', 'L');
+
+
+		$pdf->SetFont('', 'B', $default_font_size - 1);
+		$pdf->SetXY($this->marge_gauche+2, $tab_top+58);
+		$pdf->MultiCell(80, 2, $outputlangs->transnoentities("BtpTotalSituationTTC"), '', 'L');
+		$pdf->SetFont('', '', $default_font_size - 2);
+
+		if ($displayWarranty) {
+			$pdf->SetXY($this->marge_gauche + 2, $tab_top + 74);
+			$pdf->MultiCell(80, 2, $outputlangs->trans("BtpRetenueGarantieWithPercent", $object->retained_warranty), '', 'L');
+			$nextY = $tab_top+93;
+		} else {
+			$nextY = $tab_top+74;
+		}
+
+		$pdf->SetFont('', 'B', $default_font_size - 1);
+		$pdf->SetXY($this->marge_gauche+2, $nextY);
+		$pdf->MultiCell(80, 2, $outputlangs->transnoentities("BtpRayToRest"), '', 'L');
+		$pdf->SetFont('', '', $default_font_size - 2);
+		/***********************************************************/
+
+		/**********************Données*******************************/
+		$TToDisplay = array(
+			'cumul_anterieur',
+			'nouveau_cumul',
+			'current'
+		);
+
+		$x = $this->marge_gauche+85;
+		//	    unset($this->TDataSituation['derniere_situation']);
+		//print json_encode($object->lines);exit;
+		// print json_encode($this->TDataSituation);exit;
+		foreach ($TToDisplay as $col) {
+			// Travaux principaux
+			$pdf->SetXY($x, $tab_top+8);
+			$pdf->MultiCell(32, 2, price($this->TDataSituation[$col]['HT'], 0, '', 1, -1, 2), '', 'R');
+
+			// Travaux supplémentaires
+			$pdf->SetXY($x, $tab_top+12);
+			$pdf->MultiCell(32, 2, price($this->TDataSituation[$col]['travaux_sup'], 0, '', 1, -1, 2), '', 'R');
+
+			$i = -8;
+			foreach ($form->cache_vatrates as $TVatInfo) {
+				$tva_tx_formated = sprintf("%01.3f", $TVatInfo['txtva']);
+				if (empty($this->TDataSituation['current'][$tva_tx_formated])) {
+					continue;
+				}
+				$i += 8;
+
+				// Total HT
+				$pdf->SetXY($x, $tab_top+24+$i);
+				$pdf->MultiCell(32, 2, price($this->TDataSituation[$col][$tva_tx_formated]['HT'], 0, '', 1, -1, 2), '', 'R');
+
+				// Total TVA
+				if (! empty($this->TDataSituation['current'][$tva_tx_formated]['TVA'])) {
+					$pdf->SetXY($x, $tab_top + 28 + $i);
+					$pdf->MultiCell(32, 2, price($this->TDataSituation[$col][$tva_tx_formated]['TVA'], 0, '', 1, -1, 2), '', 'R');
+				} else {
+					$i -= 4;
+				}
+			}
+
+			// Total TTC
+			$pdf->SetXY($x, $tab_top+33+$i);
+			$pdf->MultiCell(32, 2, price($this->TDataSituation[$col]['TTC'], 0, '', 1, -1, 2), '', 'R');
+
+			// Total situation
+			$pdf->SetFont('', 'B', $default_font_size - 1);
+			$pdf->SetXY($x, $tab_top+58);
+			$pdf->MultiCell(32, 2, price($this->TDataSituation[$col]['TTC'], 0, '', 1, -1, 2), '', 'R');
+			$pdf->SetFont('', '', $default_font_size - 2);
+
+
+			if ($displayWarranty) {
+				// Retenue de garantie
+				$pdf->SetXY($x, $tab_top+74);
+				$pdf->MultiCell(32, 2, price($this->TDataSituation[$col]['retenue_garantie'], 0, '', 1, -1, 2), '', 'R');
+				$nextY = $tab_top+93;
+			} else {
+				$nextY = $tab_top+74;
+			}
+
+			// Montant à payer TTC
+			$pdf->SetFont('', 'B', $default_font_size - 1);
+			$pdf->SetXY($x, $nextY);
+			$pdf->MultiCell(32, 2, price($this->TDataSituation[$col]['total_a_payer'], 0, '', 1, -1, 2), '', 'R');
+			$pdf->SetFont('', '', $default_font_size - 2);
+
+			$x+=36;
+		}
+		/************************************************************/
+	}
+
+
+	/**
+	 * Recupere les données des factures de situations
+	 *
+	 * NOTE :
+	 * 	Travaux principaux : lignes de la facture de situation qui étaient déjà présentes sur la facture antérieure
+	 * 	Travaux supplémentaires : lignes de la facture de situation qui se sont ajoutées par rapport à la facture antérieure
+	 * 	Exemple : S1 avec l1 (tp), l2 (tp)
+	 * 	          S2 avec l1 (tp), l2 (tp), l3 (ts)
+	 * 	          S3 avec l1 (tp), l2 (tp), l3 (tp), l4 (ts)
+	 *
+	 * @param   $object  Facture
+	 *
+	 * @return  array
+	 *
+	 * Détails du tableau retourné:
+	 *
+	 * cumul_anterieur : données de la facture de situation précédente
+	 * nouveau_cumul   : données du cumul de toutes les factures de situations jusqu'à l'actuelle
+	 * current         : données de la facture de situation en cours
+	 *
+	 */
+	public function _getDataSituation(&$object)
+	{
+		global $conf, $db;
+		// $btpModule = new modBtp($db);
+
+		/* from dolibarr core
+		* Fetch previous and next situations invoices.
+		* Return all previous and next invoices (both standard and credit notes).
+		*/
+		$object->fetchPreviousNextSituationInvoice();
+		/** @var Facture[] $TPreviousInvoices */
+		$TPreviousInvoices = $object->tab_previous_situation_invoice;
+		unset($object->tab_previous_situation_invoice);
+
+		//liste de toutes les factures précédentes
+		// print json_encode($TPreviousInvoices); exit;
+
+		$TPreviousInvoices = array_reverse($TPreviousInvoices);
+		$facDerniereSituation = $TPreviousInvoices[0];
+
+		$TDataSituation = array();
+
+		if (! empty($facDerniereSituation)) {
+			$TDataSituation['derniere_situation'] = $facDerniereSituation;
+			$TDataSituation['date_derniere_situation'] = $facDerniereSituation->date;
+		}
+
+		$retenue_garantie = $retenue_garantie_anterieure = 0;
+		// Init tous les champs à 0
+		$TDataSituation['cumul_anterieur'] = array(
+			'HT' => 0,    //montant HT normal
+			'TVA' => 0,   //montant de la TVA sur le HTnet
+			'TTC' => 0,   //montant TTC (HTnet + TVA)
+			'retenue_garantie' => 0,
+			'travaux_sup' => 0,
+			'HTnet' => 0, //montant HT
+			'total_a_payer' => 0 //montant "a payer" sur la facture
+		);
+
+		//S'il y a des factures de situations précédentes
+		if (!empty($TPreviousInvoices)) {
+			//calcul des cumuls
+			foreach ($TPreviousInvoices as $i => $previousInvoice) {
+				$TDataSituation['cumul_anterieur']['HT'] += $previousInvoice->total_ht;
+				// $TDataSituation['cumul_anterieur']['TTC'] += $previousInvoice->total_ttc;
+				// $TDataSituation['cumul_anterieur']['TVA'] += $previousInvoice->total_tva;
+
+				//lecture de chaque ligne pour
+				// 1. recalculer le total_ht en fonction de la progression par rapport à la situation précédente
+				// 2. recalculer la TVA associée à ce montant HT
+				// 3. le cas échéant stocker cette information comme travaux_sup si cette ligne n'est pas liée à une ligne de la situation précédente
+				foreach ($previousInvoice->lines as $k => $l) {
+					$total_ht = floatval($l->total_ht);
+					if (empty($total_ht)) {
+						continue;
+					}
+
+					// Si $prevSituationPercent vaut 0 c'est que la ligne $l est un travail supplémentaire
+					$prevSituationPercent = 0;
+					$isFirstSituation = false;
+					if (!empty($l->fk_prev_id)) {
+						$prevSituationPercent = $l->get_prev_progress($previousInvoice->id, true);
+					} elseif (! array_key_exists($i+1, $TPreviousInvoices)) {
+						$isFirstSituation = true;
+					}
+
+					$calc_ht = 0;
+					//modification du format de TVA, cas particulier des imports ou autres qui peuvent avoir des 20.0000
+					$ltvatx = sprintf("%01.3f", $l->tva_tx);
+
+					$calc_ht = $l->subprice * $l->qty * (1 - $l->remise_percent/100) * ($l->situation_percent - $prevSituationPercent)/100;
+
+					//1ere ligne
+					$amounttva = $calc_ht * ($ltvatx/100);
+					if (! isset($TDataSituation['cumul_anterieur'][$ltvatx])) {
+						$TDataSituation['cumul_anterieur'][$ltvatx]['HT'] = $calc_ht;
+						$TDataSituation['cumul_anterieur'][$ltvatx]['TVA'] = $amounttva;
+					} else {
+						//lignes suivantes
+						$TDataSituation['cumul_anterieur'][$ltvatx]['HT'] += ($calc_ht);
+						$TDataSituation['cumul_anterieur'][$ltvatx]['TVA'] += $amounttva;
+					}
+
+					//le grand total de TVA
+					$TDataSituation['cumul_anterieur']['TVA'] += $amounttva;
+
+					if (empty($l->fk_prev_id) && ! $isFirstSituation) {
+						// TODO: à clarifier, mais pour moi, un facture de situation précédente qui a des progressions à 0% c'est pas logique
+						$TDataSituation['cumul_anterieur']['travaux_sup'] += $calc_ht;
+					}
+				}
+			}
+
+			if (! empty($previousInvoice->retained_warranty) && empty($conf->global->USE_RETAINED_WARRANTY_ONLY_FOR_SITUATION_FINAL)) {
+				$retenue_garantie_anterieure += $previousInvoice->getRetainedWarrantyAmount();
+			}
+
+			//les cumuls
+			$TDataSituation['cumul_anterieur']['HT'] -= $TDataSituation['cumul_anterieur']['travaux_sup'];
+			$TDataSituation['cumul_anterieur']['retenue_garantie'] = $retenue_garantie_anterieure;
+			$TDataSituation['cumul_anterieur']['TTC'] = $TDataSituation['cumul_anterieur']['HT'] + $TDataSituation['cumul_anterieur']['TVA'];
+			$TDataSituation['cumul_anterieur']['total_a_payer'] = $TDataSituation['cumul_anterieur']['TTC'] - $retenue_garantie_anterieure;
+		}
+
+		// print json_encode($facDerniereSituation->lines);exit;
+		$TDataSituation['current'] = $this->btpGetInvoiceAmounts($object->id);
+
+		if (! empty($facDerniereSituation->lines)) {
+			$TFacLinesKey = array_keys($facDerniereSituation->lines);
+			$TObjectLinesKey = array_keys($object->lines);
+			$TDiffKey = array_diff($TObjectLinesKey, $TFacLinesKey);
+
+			// print json_encode($TDiffKey);exit;
+
+			foreach ($TDiffKey as $i) {
+				if (empty($object->lines[$i]->fk_prev_id)) {
+					$TDataSituation['nouveau_cumul']['travaux_sup'] += $object->lines[$i]->total_ht;
+					$TDataSituation['current']['travaux_sup'] += $object->lines[$i]->total_ht;
+				}
+			}
+		}
+
+		//Le nouveau cumul = cumul antérieur + current
+		$TDataSituation['nouveau_cumul'] = $this->_somme_situation($TDataSituation['current'], $TDataSituation['cumul_anterieur']);
+
+		//erics
+		// print "<p>" . json_encode($TDataSituation['cumul_anterieur']) ."</p>";
+		return $TDataSituation;
+	}
+
+	/**
+	 * calcul la somme des deux tableaux, clés par clé avec prise en compte des tableaux imbriqués
+	 *
+	 * @param   [type]  $a  [$a description]
+	 * @param   [type]  $b  [$b description]
+	 *
+	 * @return  [type]      [return description]
+	 */
+	public function _somme_situation($a, $b)
+	{
+		$ret = array();
+		if (is_array($a)) {
+			foreach ($a as $k => $v) {
+				if (is_array($v)) {
+					$ret[$k] = $this->_somme_situation($v, $b[$k]);
+				} else {
+					$ret[$k] = $a[$k];
+					if (isset($b[$k])) {
+						$ret[$k] += $b[$k];
+					}
+				}
+			}
+		} else {
+			dol_syslog("_somme_situation first arg is not an array");
+		}
+		return $ret;
+	}
+
+	/**
+	 * @param Facture $object
+	 * @return bool
+	 */
+	public function displayRetainedWarranty($object)
+	{
+		if (is_callable(array($object, 'displayRetainedWarranty'))) {
+			return $object->displayRetainedWarranty();
+		} else {
+			// FOR RETROCOMPATIBILITY
+			global $conf;
+
+			// TODO : add a flag on invoices to store this conf USE_RETAINED_WARRANTY_ONLY_FOR_SITUATION_FINAL
+
+			// note : we dont need to test USE_RETAINED_WARRANTY_ONLY_FOR_SITUATION because if $object->retained_warranty is not empty it's because it was set when this conf was active
+
+			$displayWarranty = false;
+			if (!empty($object->retained_warranty)) {
+				$displayWarranty = true;
+
+				if ($object->type == Facture::TYPE_SITUATION && !empty($conf->global->USE_RETAINED_WARRANTY_ONLY_FOR_SITUATION_FINAL)) {
+					// Check if this situation invoice is 100% for real
+					$displayWarranty = false;
+					if (!empty($object->situation_final)) {
+						$displayWarranty = true;
+					} elseif (!empty($object->lines) && $object->status == Facture::STATUS_DRAFT) {
+						// $object->situation_final need validation to be done so this test is need for draft
+						$displayWarranty = true;
+
+						foreach ($object->lines as $i => $line) {
+							if ($line->product_type < 2 && $line->situation_percent < 100) {
+								$displayWarranty = false;
+								break;
+							}
+						}
+					}
+				}
+			}
+
+			return $displayWarranty;
+		}
+	}
+
+	public function _getInfosLineDerniereSituation(&$object, &$current_line)
+	{
+		if (empty($object->situation_cycle_ref) || $object->situation_counter <= 1) {
+			return;
+		}
+
+		$facDerniereSituation = &$this->TDataSituation['derniere_situation'];
+		//var_dump($current_line);exit;
+		// On cherche la ligne précédente de la ligne sur laquelle on se trouve :
+		foreach ($facDerniereSituation->lines as $l) {
+			if ($l->special_code == 9) {
+				continue;
+			}
+
+			if ($l->rowid == $current_line->fk_prev_id) {
+				// Récupération du total_ht sans prendre en compte la progression (pour la colonne "sommes")
+				$ltvatx = sprintf("%01.3f", $l->tva_tx);
+				$tabprice = calcul_price_total($l->qty, $l->subprice, $l->remise_percent, $ltvatx, $l->localtax1_tx, $l->localtax2_tx, 0, 'HT', $l->info_bits, $l->product_type);
+				$total_ht  = $tabprice[0];
+				$total_tva = $tabprice[1];
+				$total_ttc = $tabprice[2];
+				$total_localtax1 = $tabprice[9];
+				$total_localtax2 = $tabprice[10];
+				$pu_ht = $tabprice[3];
+				//var_dump($tabprice);
+				return array(
+					'progress_prec'=>$l->situation_percent
+				,'total_ht_without_progress'=>$total_ht
+				,'total_ht'=>$l->total_ht
+				);
+			}
+		}
+	}
+
+	/**
+	 * Rect pdf
+	 *
+	 * @param	TCPDF		$pdf			Object PDF
+	 * @param	float	$x				Abscissa of first point
+	 * @param	float	$y		        Ordinate of first point
+	 * @param	float	$l				??
+	 * @param	float	$h				??
+	 * @param	int		$hidetop		1=Hide top bar of array and title, 0=Hide nothing, -1=Hide only title
+	 * @param	int		$hidebottom		Hide bottom
+	 * @return	void
+	 */
+	public function printRectBtp($pdf, $x, $y, $l, $h, $hidetop = 0, $hidebottom = 0)
+	{
+		if (empty($hidetop) || $hidetop==-1) {
+			$pdf->line($x, $y, $x+$l, $y);
+		}
+		$pdf->line($x+$l, $y, $x+$l, $y+$h);
+		if (empty($hidebottom)) {
+			$pdf->line($x+$l, $y+$h, $x, $y+$h);
+		}
+		$pdf->line($x, $y+$h, $x, $y);
+	}
+
+
+	/**
+	 * Get data about invoice
+	 *
+	 * @param   int  	$id            		invoice id
+	 * @param   boolean $forceReadFromDB  	set to true if you want to force refresh data from SQL
+	 *
+	 * @return  array       [return description]
+	 */
+	public function btpGetInvoiceAmounts($id, $forceReadFromDB = false)
+	{
+		global $user,$langs,$conf,$mysoc,$db,$hookmanager,$nblignes;
+
+		// $btpModule = new modBtp($db);
+
+		$object=new Facture($db);
+		$object->fetch($id);
+
+		/* from dolibarr core
+		* Fetch previous and next situations invoices.
+		* Return all previous and next invoices (both standard and credit notes).
+		*/
+		$object->fetchPreviousNextSituationInvoice();
+		/** @var Facture[] $TPreviousInvoices */
+		$TPreviousInvoices = $object->tab_previous_situation_invoice;
+		unset($object->tab_previous_situation_invoice);
+
+		$TPreviousInvoices = array_reverse($TPreviousInvoices);
+		$facDerniereSituation = $TPreviousInvoices[0];
+
+		$ret = array(
+			'HT' => 0,    //montant HT normal
+			'HTnet' => 0, //montant HT
+			'TVA' => 0,   //montant de la TVA sur le HTnet
+			'TTC' => 0,   //montant TTC (HTnet + TVA)
+			'retenue_garantie' => 0,
+			'travaux_sup' => 0,
+			'total_a_payer' => 0 //montant "a payer" sur la facture
+		);
+
+		if (! empty($facDerniereSituation)) {
+			$ret['derniere_situation'] = $facDerniereSituation;
+			$ret['date_derniere_situation'] = $facDerniereSituation->date;
+		}
+
+		//Parcours des lignes de la facture en cours pour récupérer toutes les données
+		foreach ($object->lines as $k => $l) {
+			$total_ht = floatval($l->total_ht);
+			if (empty($total_ht)) {
+				continue;
+			}
+
+			// Si $prevSituationPercent vaut 0 c'est que la ligne $l est un travail supplémentaire
+			$prevSituationPercent = 0;
+			if (!empty($l->fk_prev_id)) {
+				$prevSituationPercent = $l->get_prev_progress($object->id, true);
+			}
+
+			$calc_ht = 0;
+			//modification du format de TVA, cas particulier des imports ou autres qui peuvent avoir des 20.0000
+			$ltvatx = sprintf("%01.3f", $l->tva_tx);
+
+			$calc_ht = $l->subprice * $l->qty * (1 - $l->remise_percent/100) * ($l->situation_percent - $prevSituationPercent)/100;
+
+			//1ere ligne pour la situation actuelle
+			$amounttva = ($calc_ht) * ($ltvatx/100);
+			if (! isset($ret[$ltvatx])) {
+				$ret[$ltvatx]['HT'] = $calc_ht;
+				$ret[$ltvatx]['TVA'] = $amounttva;
+			} else {
+				$ret[$ltvatx]['HT'] += ($calc_ht);
+				$ret[$ltvatx]['TVA'] += $amounttva;
+			}
+
+			//les totaux
+			$ret['TVA'] += $amounttva;
+
+			// On veut juste les travaux principaux dans cette variable
+			// Si on teste juste "! empty($prevSituationPercent)" toutes les lignes de la 1ere situation sont considérées comme travaux supplémentaires
+			// Et vu qu'il ne peut pas y avoir de travaux supplémentaires dans la 1ere situation, ça donne ça :
+			//
+			if (!empty($l->fk_prev_id) || empty($facDerniereSituation->lines)) {
+				$ret['HT'] += $calc_ht;
+			}
+		}
+
+		// Retained warranty
+		$retenue_garantie = $object->getRetainedWarrantyAmount();
+		if ($retenue_garantie == -1) {
+			$retenue_garantie = 0;
+		}
+
+		//les cumuls
+		$ret['TTC'] = $ret['HT'] + $ret['TVA'];
+		$ret['HT'] -= $ret['travaux_sup'];
+		$ret['total_a_payer'] = $ret['TTC'] - $retenue_garantie;
+		$ret['retenue_garantie'] = $retenue_garantie;
+
+		//Clean up before keep in "cache"
+		unset($ret['derniere_situation']->db);
+		unset($ret['derniere_situation']->fields);
+		unset($ret['derniere_situation']->lines);
+
+		// print "<p>Store to cache $id : " . json_encode($_cache_btpProrataGetInvoiceAmounts[$id]) . "</p>";
+		return $ret;
 	}
 }
