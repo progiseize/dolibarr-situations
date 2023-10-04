@@ -528,7 +528,6 @@ class pdf_octopus extends ModelePDFFactures
 				$this->categoryOfOperation = $categoryOfOperation;
 
 				// New page
-				print "call addpage 2";
 				$pdf->AddPage();
 				if (!empty($tplidx)) {
 					$pdf->useTemplate($tplidx);
@@ -536,7 +535,6 @@ class pdf_octopus extends ModelePDFFactures
 				$pagenb++;
 
 				// Output header (logo, ref and address blocks). This is first call for first page.
-				print "call pagehead 1";
 				$pagehead = $this->_pagehead($pdf, $object, 1, $outputlangs, $outputlangsbis);
 				$top_shift = $pagehead['top_shift'];
 				$shipp_shift = $pagehead['shipp_shift'];
@@ -605,7 +603,6 @@ class pdf_octopus extends ModelePDFFactures
 
 				$this->_pagefoot($pdf, $object, $outputlangs, 1);
 
-				print "call addpage 3";
 				$pdf->AddPage();
 				$pdf->setPage(2);
 				$pagenb++;
@@ -680,14 +677,12 @@ class pdf_octopus extends ModelePDFFactures
 
 						// prepare pages to receive notes
 						while ($pagenb < $pageposafternote) {
-							print "call addpage 1";
 							$pdf->AddPage();
 							$pagenb++;
 							if (!empty($tplidx)) {
 								$pdf->useTemplate($tplidx);
 							}
 							if (!getDolGlobalInt('MAIN_PDF_DONOTREPEAT_HEAD')) {
-								print "call pagehead 2";
 								$this->_pagehead($pdf, $object, 0, $outputlangs, $outputlangsbis);
 							}
 							// $this->_pagefoot($pdf,$object,$outputlangs,1);
@@ -706,7 +701,6 @@ class pdf_octopus extends ModelePDFFactures
 						$posyafter = $pdf->GetY();
 
 						if ($posyafter > ($this->page_hauteur - ($this->heightforfooter + $this->heightforfreetext + 20))) {	// There is no space left for total+free text
-							print "call addpage 4";
 							$pdf->AddPage('', '', true);
 							$pagenb++;
 							$pageposafternote++;
@@ -746,7 +740,6 @@ class pdf_octopus extends ModelePDFFactures
 							$pdf->useTemplate($tplidx);
 						}
 						if (!getDolGlobalInt('MAIN_PDF_DONOTREPEAT_HEAD')) {
-							print "call pagehead 3";
 							$this->_pagehead($pdf, $object, 0, $outputlangs, $outputlangsbis);
 						}
 						$height_note = $posyafter - $this->tab_top_newpage;
@@ -761,7 +754,6 @@ class pdf_octopus extends ModelePDFFactures
 
 						if ($posyafter > ($this->page_hauteur - ($this->heightforfooter + $this->heightforfreetext + 20))) {
 							// not enough space, need to add page
-							print "call addpage 5";
 							$pdf->AddPage('', '', true);
 							$pagenb++;
 							$pageposafternote++;
@@ -770,7 +762,6 @@ class pdf_octopus extends ModelePDFFactures
 								$pdf->useTemplate($tplidx);
 							}
 							if (!getDolGlobalInt('MAIN_PDF_DONOTREPEAT_HEAD')) {
-								print "call pagehead 4";
 								$this->_pagehead($pdf, $object, 0, $outputlangs, $outputlangsbis);
 							}
 
@@ -820,7 +811,6 @@ class pdf_octopus extends ModelePDFFactures
 					if ($this->getColumnStatus('photo')) {
 						// We start with Photo of product line
 						if (isset($imglinesize['width']) && isset($imglinesize['height']) && ($curY + $imglinesize['height']) > ($this->page_hauteur - ($this->heightforfooter + $this->heightforfreetext + $this->heightforinfotot))) {	// If photo too high, we moved completely on new page
-							print "call addpage 6";
 							$pdf->AddPage('', '', true);
 							if (!empty($tplidx)) {
 								$pdf->useTemplate($tplidx);
@@ -863,7 +853,6 @@ class pdf_octopus extends ModelePDFFactures
 							//var_dump($posyafter); var_dump(($this->page_hauteur - ($this->heightforfooter+$this->heightforfreetext+$this->heightforinfotot))); exit;
 							if ($posyafter > ($this->page_hauteur - ($this->heightforfooter + $this->heightforfreetext + $this->heightforinfotot))) {	// There is no space left for total+free text
 								if ($i == ($nblines - 1)) {	// No more lines, and no space left to show total, so we create a new page
-									print "call addpage 7";
 									$pdf->AddPage('', '', true);
 									if (!empty($tplidx)) {
 										$pdf->useTemplate($tplidx);
@@ -960,7 +949,6 @@ class pdf_octopus extends ModelePDFFactures
 					if ($this->getColumnStatus($columkey)) {
 						$printval = price($TInfosLigneSituationPrecedente['total_ht_without_progress'], 0, '', 1, -1, 2);
 						$this->printStdColumnContent($pdf, $curY, $columkey, $printval);
-						print "btpsomme " . $printval;
 						$nexY = max($pdf->GetY(), $nexY);
 					}
 
@@ -1096,7 +1084,6 @@ class pdf_octopus extends ModelePDFFactures
 						$pdf->setPage($pagenb);
 						$pdf->setPageOrientation('', 1, 0); // The only function to edit the bottom margin of current page to set it.
 						if (!getDolGlobalInt('MAIN_PDF_DONOTREPEAT_HEAD')) {
-							print "call pagehead 5";
 							$this->_pagehead($pdf, $object, 0, $outputlangs, $outputlangsbis);
 						}
 						if (!empty($tplidx)) {
@@ -1116,14 +1103,12 @@ class pdf_octopus extends ModelePDFFactures
 
 						$this->_pagefoot($pdf, $object, $outputlangs, 1);
 						// New page
-						print "call addpage 8";
 						$pdf->AddPage();
 						if (!empty($tplidx)) {
 							$pdf->useTemplate($tplidx);
 						}
 						$pagenb++;
 						if (!getDolGlobalInt('MAIN_PDF_DONOTREPEAT_HEAD')) {
-							print "call pagehead 6";
 							$this->_pagehead($pdf, $object, 0, $outputlangs, $outputlangsbis);
 						}
 					}
@@ -1620,7 +1605,6 @@ class pdf_octopus extends ModelePDFFactures
 			foreach ($TPreviousInvoices as &$previousInvoice) {
 				if ($posy  > ($this->page_hauteur - $this->marge_basse)) {
 					$this->_pagefoot($pdf, $object, $outputlangs, 1);
-					print "call addpage 9";
 					$pdf->addPage();
 					$pdf->setY($this->marge_haute);
 					$posy = $pdf->GetY();
@@ -1711,7 +1695,6 @@ class pdf_octopus extends ModelePDFFactures
 
 
 			if ($posy  > ($this->page_hauteur - $this->marge_basse)) {
-				print "call addpage 10";
 				$pdf->addPage();
 				$pdf->setY($this->marge_haute);
 				$posy = $pdf->GetY();
@@ -2851,7 +2834,6 @@ class pdf_octopus extends ModelePDFFactures
 			$this->cols = $hookmanager->resArray;
 		}
 
-		// print "call defineColumnField... cols = " . json_encode($this->cols);exit;
 	}
 
 	/**
