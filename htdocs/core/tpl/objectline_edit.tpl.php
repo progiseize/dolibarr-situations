@@ -7,6 +7,7 @@
  * Copyright (C) 2013		Florian Henry		<florian.henry@open-concept.pro>
  * Copyright (C) 2018       Frédéric France         <frederic.france@netlogic.fr>
  * Copyright (C) 2022		OpenDSI				<support@open-dsi.fr>
+ * Copyright (C) 2023       Anthony DAMHET      <a.damhet@progiseize.fr>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -297,7 +298,20 @@ $coldisplay++;
 	// Progession for situation invoices
 	if ($object->situation_cycle_ref) {
 		$coldisplay++;
-		print '<td class="nowrap right linecolcycleref"><input class="right" type="text" size="1" value="'.(GETPOSTISSET('progress') ? GETPOST('progress') : $line->situation_percent).'" name="progress">%</td>';
+		if(getDolGlobalInt('INVOICE_USE_SITUATION') == 1){
+			$fieldv = (GETPOSTISSET('progress') ? GETPOST('progress') : $line->situation_percent);
+		}
+		elseif(getDolGlobalInt('INVOICE_USE_SITUATION') == 2){
+			$tmp_fieldv = (GETPOSTISSET('progress') ? GETPOST('progress') : $line->situation_percent);
+			$old_fieldv = $line->get_allprev_progress($line->fk_facture);
+			$fieldv = $tmp_fieldv + $old_fieldv;
+		}
+
+		print '<td class="nowrap right linecolcycleref"><input class="right" type="text" size="1" value="'.$fieldv.'" name="progress">%</td>';
+		if(getDolGlobalInt('INVOICE_USE_SITUATION') == 2):
+			$coldisplay++;
+			print '<td></td>';
+		endif;
 		$coldisplay++;
 		print '<td></td>';
 	}
