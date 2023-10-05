@@ -1677,7 +1677,18 @@ class pdf_octopus extends ModelePDFFactures
                 //}
 
                 // VAT
-                foreach ($this->tva as $tvakey => $tvaval) {
+				$tvas = array();
+				for ($i=0; $i<sizeof($object->lines); $i++)
+				{
+					$tvaligne = $object->lines[$i]->total_tva;
+					$vatrate=(string) $object->lines[$i]->tva_tx;
+
+					if (($object->lines[$i]->info_bits & 0x01) == 0x01) $vatrate.='*';
+					if (! isset($tvas[$vatrate])) 				$tvas[$vatrate]=0;
+					$tvas[$vatrate] += $tvaligne;
+				}
+
+                foreach ($tvas as $tvakey => $tvaval) {
                     if ($tvakey != 0) {    // On affiche pas taux 0
                         $this->atleastoneratenotnull++;
 
@@ -2905,7 +2916,7 @@ class pdf_octopus extends ModelePDFFactures
             foreach ($TPreviousInvoices as $i => $previousInvoice) {
                 $TDataSituation['cumul_anterieur']['HT'] += $previousInvoice->total_ht;
                 // $TDataSituation['cumul_anterieur']['TTC'] += $previousInvoice->total_ttc;
-                // $TDataSituation['cumul_anterieur']['TVA'] += $previousInvoice->total_tva;
+                $TDataSituation['cumul_anterieur']['TVA'] += $previousInvoice->total_tva;
 
                 //lecture de chaque ligne pour
                 // 1. recalculer le total_ht pour chaque taux de TVA
@@ -2942,7 +2953,7 @@ class pdf_octopus extends ModelePDFFactures
                     }
 
                     //le grand total de TVA
-                    $TDataSituation['cumul_anterieur']['TVA'] += $amounttva;
+                    // $TDataSituation['cumul_anterieur']['TVA'] += $amounttva;
 
                     if (empty($l->fk_prev_id) && ! $isFirstSituation) {
                         // TODO: à clarifier, mais pour moi, un facture de situation précédente qui a des progressions à 0% c'est pas logique
@@ -3082,8 +3093,8 @@ class pdf_octopus extends ModelePDFFactures
                 //var_dump($tabprice);
                 return array(
                     'progress_prec'=>$l->situation_percent
-                ,'total_ht_without_progress'=>$total_ht
-                ,'total_ht'=>$l->total_ht
+	                ,'total_ht_without_progress'=>$total_ht
+    	            ,'total_ht'=>$l->total_ht
                 );
             }
         }
@@ -3142,11 +3153,11 @@ class pdf_octopus extends ModelePDFFactures
         $facDerniereSituation = $TPreviousInvoices[0];
 
         $ret = array(
-            'HT' => $object->total_ht,    //montant HT normal
-            'HTnet' => $object->total_ht, //montant HT
-            'TVA' => $object->total_tva,   //montant de la TVA sur le HTnet
-            'TTC' => $object->total_ttc,   //montant TTC (HTnet + TVA)
-            'retenue_garantie' => $object->retained_warranty,
+            'HT' => 0,    //montant HT normal
+            'HTnet' => 0, //montant HT
+            'TVA' => 0,   //montant de la TVA sur le HTnet
+            'TTC' => 0,   //montant TTC (HTnet + TVA)
+            'retenue_garantie' => 0,
             'travaux_sup' => 0,
             'total_a_payer' => 0 //montant "a payer" sur la facture
         );
@@ -3163,35 +3174,11 @@ class pdf_octopus extends ModelePDFFactures
                 continue;
             }
 
-            // Si $prevSituationPercent vaut 0 c'est que la ligne $l est un travail supplémentaire
-            $prevSituationPercent = 0;
-            if (!empty($l->fk_prev_id)) {
-                $prevSituationPercent = $l->get_prev_progress($object->id, true);
-            }
-
-            $calc_ht = $l->total_ht;
             //modification du format de TVA, cas particulier des imports ou autres qui peuvent avoir des 20.0000
             $ltvatx = sprintf("%01.3f", $l->tva_tx);
 
-            $amounttva = $l->total_tva;
-            if (! isset($ret[$ltvatx])) {
-                $ret[$ltvatx]['HT'] = $calc_ht;
-                $ret[$ltvatx]['TVA'] = $amounttva;
-            } else {
-                $ret[$ltvatx]['HT'] += ($calc_ht);
-                $ret[$ltvatx]['TVA'] += $amounttva;
-            }
-
-            //les totaux
-            $ret['TVA'] += $amounttva;
-
-            // On veut juste les travaux principaux dans cette variable
-            // Si on teste juste "! empty($prevSituationPercent)" toutes les lignes de la 1ere situation sont considérées comme travaux supplémentaires
-            // Et vu qu'il ne peut pas y avoir de travaux supplémentaires dans la 1ere situation, ça donne ça :
-            //
-            if (!empty($l->fk_prev_id) || empty($facDerniereSituation->lines)) {
-                $ret['HT'] += $calc_ht;
-            }
+			$ret[$ltvatx]['TVA'] += $l->total_tva;
+			$ret[$ltvatx]['HT'] += $l->total_ht;
         }
 
         // Retained warranty
@@ -3201,8 +3188,9 @@ class pdf_octopus extends ModelePDFFactures
         }
 
         //les cumuls
-        $ret['TTC'] = $ret['HT'] + $ret['TVA'];
-        $ret['HT'] -= $ret['travaux_sup'];
+        $ret['TTC'] = $object->total_ttc;
+        $ret['TVA'] = $object->total_tva;
+        $ret['HT'] = $object->total_ht - $ret['travaux_sup'];
         $ret['total_a_payer'] = $ret['TTC'] - $retenue_garantie;
         $ret['retenue_garantie'] = $retenue_garantie;
 
@@ -3401,22 +3389,8 @@ class pdf_octopus extends ModelePDFFactures
 			$tvas = array();
 			for ($i=0; $i<sizeof($invoice->lines); $i++)
 			{
-				$prev_progress = $invoice->lines[$i]->get_prev_progress($invoice->id);
-				if ($prev_progress > 0 && !empty($invoice->lines[$i]->situation_percent)) // Compute progress from previous situation
-				{
-					if ($conf->multicurrency->enabled && $invoice->multicurrency_tx != 1) $tvaligne = $sign * $invoice->lines[$i]->multicurrency_total_tva * ($invoice->lines[$i]->situation_percent - $prev_progress) / $invoice->lines[$i]->situation_percent;
-					else $tvaligne = $sign * $invoice->lines[$i]->total_tva * ($invoice->lines[$i]->situation_percent - $prev_progress) / $invoice->lines[$i]->situation_percent;
-				} else {
-					if ($conf->multicurrency->enabled && $invoice->multicurrency_tx != 1) $tvaligne= $sign * $invoice->lines[$i]->multicurrency_total_tva;
-					else $tvaligne= $sign * $invoice->lines[$i]->total_tva;
-				}
-
-				if ($invoice->remise_percent) $tvaligne-=($tvaligne*$invoice->remise_percent)/100;
-
-				$tvaligne = price2num(price($tvaligne), 'MT');
-
+				$tvaligne = $invoice->lines[$i]->total_tva;
 				$vatrate=(string) $invoice->lines[$i]->tva_tx;
-
 
 				if (($invoice->lines[$i]->info_bits & 0x01) == 0x01) $vatrate.='*';
 				if (! isset($tvas[$vatrate])) 				$tvas[$vatrate]=0;
