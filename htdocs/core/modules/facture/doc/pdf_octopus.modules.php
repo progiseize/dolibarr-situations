@@ -3255,6 +3255,10 @@ class pdf_octopus extends ModelePDFFactures
         $posy = $tab2_top;
 		$posx = $this->marge_gauche;
         $index = 1;
+		$outputlangs->load('orders');
+		$outputlangs->load('propal');
+		$width = 70;
+		$width2 = $this->page_largeur - $posx - $width - $this->marge_droite;
 
         $pdf->SetFont('', '', $default_font_size - 1);
         $pdf->MultiCell(0, 3, ''); // Set interline to 3
@@ -3314,17 +3318,17 @@ class pdf_octopus extends ModelePDFFactures
 			$pdf->SetTextColor(0,0,60);
 			$pdf->SetFont('','', $default_font_size - 1);
 
-
-			// $pdf->SetXY($this->marge_gauche, $this->tab_top_newpage + 1);
-
 			$label = $outputlangs->transnoentities("BtpTotalPropal");
-			$pdf->MultiCell($this->page_largeur-($this->marge_droite+$this->marge_gauche), 3, $label. ' '.price($sign * ($total_ht + (! empty($propal->remise)?$propal->remise:0))), 0, 'L', 0);
+			$pdf->MultiCell($this->page_largeur-($this->marge_droite+$this->marge_gauche), 3, $label, 0, 'L', 0,1,$posx, $posy+1);
+
+			$amount = price($sign * ($total_ht + (! empty($propal->remise)?$propal->remise:0)));
+			$pdf->MultiCell($width2, 3, $amount, 0, 'R', 0,1,$posx+$width, $posy+1);
 
 			$pdf->SetFont('','', $default_font_size - 1);
 
 			// Output Rect
 			$pdf->SetDrawColor(128,128,128);
-			$this->printRect($pdf, $this->marge_gauche, $this->tab_top_newpage, $this->page_largeur-$this->marge_gauche-$this->marge_droite, 6);	// Rect prend une longueur en 3eme param et 4eme param
+			$this->printRect($pdf, $posx, $posy, $this->page_largeur-$this->marge_gauche-$this->marge_droite, 6);	// Rect prend une longueur en 3eme param et 4eme param
 
 			$posy += 4;
 		}
@@ -3336,13 +3340,6 @@ class pdf_octopus extends ModelePDFFactures
 			$remain_to_pay = $total_ht;
 		}
 
-
-
-		$outputlangs->load('orders');
-		$outputlangs->load('propal');
-
-		$width = 70;
-		$width2 = $this->page_largeur - $posx - $width - $this->marge_droite;
 		$useborder=0;
 		$index = 0;
 
@@ -3711,7 +3708,11 @@ class pdf_octopus extends ModelePDFFactures
 		$pdf->SetFont('','', $default_font_size - 1);
 		$pdf->SetXY($this->marge_gauche, $posy + 1);
 		$label = $outputlangs->transnoentities("RemainToBillHT");
-		$pdf->MultiCell($this->page_largeur-($this->marge_droite+$this->marge_gauche), 3, $label. ' '.price($remain_to_pay), 0, 'L', 0);
+		$pdf->MultiCell($this->page_largeur-($this->marge_droite+$this->marge_gauche), 3, $label, 0, 'L', 0);
+
+		$amount = price($remain_to_pay);
+		$pdf->MultiCell($width2, 3, $amount, 0, 'R', 0,1,$posx+$width, $posy+1);
+
 		$pdf->SetDrawColor(128,128,128);
 		$this->printRect($pdf, $this->marge_gauche, $posy, $this->page_largeur-$this->marge_gauche-$this->marge_droite, 7);
 
