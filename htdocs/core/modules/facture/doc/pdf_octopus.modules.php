@@ -2901,14 +2901,14 @@ class pdf_octopus extends ModelePDFFactures
 
         //S'il y a des factures de situations précédentes
         if (!empty($TPreviousInvoices)) {
-            //calcul des cumuls
+            //calcul des cumuls -- plus necessaire ?
             foreach ($TPreviousInvoices as $i => $previousInvoice) {
                 $TDataSituation['cumul_anterieur']['HT'] += $previousInvoice->total_ht;
                 // $TDataSituation['cumul_anterieur']['TTC'] += $previousInvoice->total_ttc;
                 // $TDataSituation['cumul_anterieur']['TVA'] += $previousInvoice->total_tva;
 
                 //lecture de chaque ligne pour
-                // 1. recalculer le total_ht en fonction de la progression par rapport à la situation précédente
+                // 1. recalculer le total_ht pour chaque taux de TVA
                 // 2. recalculer la TVA associée à ce montant HT
                 // 3. le cas échéant stocker cette information comme travaux_sup si cette ligne n'est pas liée à une ligne de la situation précédente
                 foreach ($previousInvoice->lines as $k => $l) {
@@ -2926,11 +2926,9 @@ class pdf_octopus extends ModelePDFFactures
                         $isFirstSituation = true;
                     }
 
-                    $calc_ht = 0;
+                    $calc_ht = $l->total_ht;
                     //modification du format de TVA, cas particulier des imports ou autres qui peuvent avoir des 20.0000
                     $ltvatx = sprintf("%01.3f", $l->tva_tx);
-
-                    $calc_ht = $l->subprice * $l->qty * (1 - $l->remise_percent/100) * ($l->situation_percent - $prevSituationPercent)/100;
 
                     //1ere ligne
                     $amounttva = $calc_ht * ($ltvatx/100);
@@ -3128,8 +3126,6 @@ class pdf_octopus extends ModelePDFFactures
     {
         global $user,$langs,$conf,$mysoc,$db,$hookmanager,$nblignes;
 
-        // $btpModule = new modBtp($db);
-
         $object=new Facture($db);
         $object->fetch($id);
 
@@ -3146,11 +3142,11 @@ class pdf_octopus extends ModelePDFFactures
         $facDerniereSituation = $TPreviousInvoices[0];
 
         $ret = array(
-            'HT' => 0,    //montant HT normal
-            'HTnet' => 0, //montant HT
-            'TVA' => 0,   //montant de la TVA sur le HTnet
-            'TTC' => 0,   //montant TTC (HTnet + TVA)
-            'retenue_garantie' => 0,
+            'HT' => $object->total_ht,    //montant HT normal
+            'HTnet' => $object->total_ht, //montant HT
+            'TVA' => $object->total_tva,   //montant de la TVA sur le HTnet
+            'TTC' => $object->total_ttc,   //montant TTC (HTnet + TVA)
+            'retenue_garantie' => $object->retained_warranty,
             'travaux_sup' => 0,
             'total_a_payer' => 0 //montant "a payer" sur la facture
         );
@@ -3173,14 +3169,11 @@ class pdf_octopus extends ModelePDFFactures
                 $prevSituationPercent = $l->get_prev_progress($object->id, true);
             }
 
-            $calc_ht = 0;
+            $calc_ht = $l->total_ht;
             //modification du format de TVA, cas particulier des imports ou autres qui peuvent avoir des 20.0000
             $ltvatx = sprintf("%01.3f", $l->tva_tx);
 
-            $calc_ht = $l->subprice * $l->qty * (1 - $l->remise_percent/100) * ($l->situation_percent - $prevSituationPercent)/100;
-
-            //1ere ligne pour la situation actuelle
-            $amounttva = ($calc_ht) * ($ltvatx/100);
+            $amounttva = $l->total_tva;
             if (! isset($ret[$ltvatx])) {
                 $ret[$ltvatx]['HT'] = $calc_ht;
                 $ret[$ltvatx]['TVA'] = $amounttva;
