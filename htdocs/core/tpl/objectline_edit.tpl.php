@@ -146,6 +146,11 @@ $coldisplay++;
 	}
 
 	// Do not allow editing during a situation cycle
+	// but in some situations that is required (update legal informations for example)
+	if (!empty($conf->global->INVOICE_SITUATION_CAN_FORCE_UPDATE_DESCRIPTION)) {
+		$situationinvoicelinewithparent = 0;
+	}
+
 	if (!$situationinvoicelinewithparent) {
 		// editor wysiwyg
 		require_once DOL_DOCUMENT_ROOT.'/core/class/doleditor.class.php';
@@ -224,10 +229,14 @@ $coldisplay++;
 		print '<td class="right"><input rel="'.$object->multicurrency_tx.'" type="text" class="flat right" size="5" id="multicurrency_subprice" name="multicurrency_subprice" value="'.(GETPOSTISSET('multicurrency_subprice') ? GETPOST('multicurrency_subprice', 'alpha') : price($line->multicurrency_subprice)).'" /></td>';
 	}
 
-	if ($inputalsopricewithtax) {
+	if (!empty($inputalsopricewithtax) && !getDolGlobalInt('MAIN_NO_INPUT_PRICE_WITH_TAX')) {
 		$coldisplay++;
-		print '<td class="right"><input type="text" class="flat right" size="5" id="price_ttc" name="price_ttc" value="'.(GETPOSTISSET('price_ttc') ? GETPOST('price_ttc') : (isset($line->pu_ttc) ? price($line->pu_ttc, 0, '', 0) : '')).'"';
-		if ($line->fk_prev_id != null) {
+		$upinctax = isset($line->pu_ttc) ? $line->pu_ttc : null;
+		if (getDolGlobalInt('MAIN_UNIT_PRICE_WITH_TAX_IS_FOR_ALL_TAXES')) {
+			$upinctax = price2num($line->total_ttc / $line->qty, 'MU');
+		}
+		print '<td class="right"><input type="text" class="flat right" size="5" id="price_ttc" name="price_ttc" value="'.(GETPOSTISSET('price_ttc') ? GETPOST('price_ttc') : (isset($upinctax) ? price($upinctax, 0, '', 0) : '')).'"';
+		if ($situationinvoicelinewithparent) {
 			print ' readonly';
 		}
 		print '></td>';
@@ -288,24 +297,21 @@ $coldisplay++;
 	<?php
 	// Progession for situation invoices
 	if ($object->situation_cycle_ref) {
-		$coldisplay++; 
-
-		if($conf->global->INVOICE_USE_SITUATION == 1){
+		$coldisplay++;
+		if(getDolGlobalInt('INVOICE_USE_SITUATION') == 1){
 			$fieldv = (GETPOSTISSET('progress') ? GETPOST('progress') : $line->situation_percent);
 		}
-		elseif($conf->global->INVOICE_USE_SITUATION == 2){
+		elseif(getDolGlobalInt('INVOICE_USE_SITUATION') == 2){
 			$tmp_fieldv = (GETPOSTISSET('progress') ? GETPOST('progress') : $line->situation_percent);
 			$old_fieldv = $line->get_allprev_progress($line->fk_facture);
 			$fieldv = $tmp_fieldv + $old_fieldv;
 		}
 
 		print '<td class="nowrap right linecolcycleref"><input class="right" type="text" size="1" value="'.$fieldv.'" name="progress">%</td>';
-
-		if($conf->global->INVOICE_USE_SITUATION == 2):
+		if(getDolGlobalInt('INVOICE_USE_SITUATION') == 2):
 			$coldisplay++;
 			print '<td></td>';
 		endif;
-
 		$coldisplay++;
 		print '<td></td>';
 	}
@@ -461,11 +467,12 @@ if (!empty($usemargins) && $user->rights->margins->creer) {
 		}
 
 		var price = 0;
-		remisejs=price2numjs(remise.val());
+		remisejs = price2numjs(remise.val());
 
-		if (remisejs != 100)	// If a discount not 100 or no discount
-		{
-			if (remisejs == '') remisejs=0;
+		if (remisejs != 100) {	// If a discount not 100 or no discount
+			if (remisejs == '') {
+				remisejs = 0;
+			}
 
 			bpjs=price2numjs(buying_price.val());
 			ratejs=price2numjs(rate.val());
