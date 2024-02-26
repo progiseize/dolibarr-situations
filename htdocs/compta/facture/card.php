@@ -1966,8 +1966,8 @@ if (empty($reshook)) {
 					}
 				}
 			}
-
-			if (!$error && $conf->global->INVOICE_USE_SITUATION == 2) {
+      
+      if (!$error && $conf->global->INVOICE_USE_SITUATION == 2) {
 				$result = $object->fetch(GETPOST('situations', 'int'));
 				$object->fk_facture_source = GETPOST('situations', 'int');
 				$object->type = Facture::TYPE_SITUATION;

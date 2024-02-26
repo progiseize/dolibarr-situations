@@ -303,8 +303,8 @@ if ($result) {
 			$tabht[$obj->rowid][$compta_prod] += $obj->total_ht;
 		}
 		$tva_npr = (($obj->info_bits & 1 == 1) ? 1 : 0);
-		if (!$tva_npr) {
-			if ($conf->global->INVOICE_USE_SITUATION == 1) {
+		  if (!$tva_npr) {
+        if ($conf->global->INVOICE_USE_SITUATION == 1) {
 				$tabtva[$obj->rowid][$compta_tva] += $obj->total_tva * $situation_ratio; // We ignore line if VAT is a NPR
 			} else {
 				$tabtva[$obj->rowid][$compta_tva] += $obj->total_tva; // We ignore line if VAT is a NPR

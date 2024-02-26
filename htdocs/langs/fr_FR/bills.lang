@@ -647,7 +647,6 @@ SituationInvoiceNewMethodAlert=Important:<br>- Si vous utilisiez les factures de
 SituationInvoiceNewMethodAlertMulticompany=(Toutes instances MultiCompany confondues)
 SituationInvoiceConfirmMigrationTitle=Êtes-vous sûr de vouloir confirmer la migration ?
 SituationInvoiceConfirmMigration=Le nouveau système de facture de situation necessite une migration des données si vous utilisiez déjà les factures de situation.<br><br>Confirmez vous l'avoir faite ou ne pas en avoir besoin ?
-
 BtpTitle=Situation n° %d
 BtpProgressColTitle=Prog.
 BtpAmountColTitle=Montant
