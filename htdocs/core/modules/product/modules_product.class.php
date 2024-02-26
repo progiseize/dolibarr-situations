@@ -60,6 +60,14 @@ abstract class ModelePDFProduct extends CommonDocGenerator
  */
 abstract class ModeleProductCode extends CommonNumRefGenerator
 {
+
+	// variables inherited from CommonNumRefGenerator class
+	public $code_null;
+	public $code_modifiable;
+	public $code_modifiable_invalide;
+	public $code_auto;
+
+
 	/**
 	 *  Return next value available
 	 *
@@ -118,7 +126,7 @@ abstract class ModeleProductCode extends CommonNumRefGenerator
 
 		$strikestart = '';
 		$strikeend = '';
-		if (!empty($conf->global->MAIN_COMPANY_CODE_ALWAYS_REQUIRED) && !empty($this->code_null)) {
+		if (getDolGlobalString('MAIN_COMPANY_CODE_ALWAYS_REQUIRED') && !empty($this->code_null)) {
 			$strikestart = '<strike>';
 			$strikeend = '</strike> '.yn(1, 1, 2).' ('.$langs->trans("ForcedToByAModule", $langs->transnoentities("yes")).')';
 		}

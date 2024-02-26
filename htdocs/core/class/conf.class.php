@@ -29,8 +29,7 @@
 /**
  *  Class to stock current configuration
  */
-#[AllowDynamicProperties]
-class Conf
+class Conf extends stdClass
 {
 	/**
 	 * @var Object 	Associative array with properties found in conf file
@@ -207,7 +206,8 @@ class Conf
 			'member' => array(),
 			'hooks' => array(),
 			'dir' => array(),
-			'syslog' => array()
+			'syslog' => array(),
+			'websitetemplates' => array()
 		);
 
 		// First level object that are modules.
@@ -236,7 +236,7 @@ class Conf
 	 *
 	 * @param	DoliDB	$db			Database handler
 	 * @param	int		$entity		Entity to get
-	 * @return	int					< 0 if KO, >= 0 if OK
+	 * @return	int					Return integer < 0 if KO, >= 0 if OK
 	 */
 	public function setEntityValues($db, $entity)
 	{
@@ -254,7 +254,7 @@ class Conf
 	 *  Note that this->db->xxx, this->file->xxx have been already set when setValues is called.
 	 *
 	 *  @param      DoliDB      $db     Database handler
-	 *  @return     int                 < 0 if KO, >= 0 if OK
+	 *  @return     int                 Return integer < 0 if KO, >= 0 if OK
 	 */
 	public function setValues($db)
 	{
@@ -263,7 +263,9 @@ class Conf
 		// Unset all old modules values
 		if (!empty($this->modules)) {
 			foreach ($this->modules as $m) {
-				if (isset($this->$m)) unset($this->$m);
+				if (isset($this->$m)) {
+					unset($this->$m);
+				}
 			}
 		}
 
@@ -315,6 +317,7 @@ class Conf
 			'hooks' => array(),
 			'dir' => array(),
 			'syslog' => array(),
+			'websitetemplates' => array(),
 		);
 
 		if (!is_null($db) && is_object($db)) {
@@ -374,7 +377,7 @@ class Conf
 									$newvalue = $arrValue;
 								} elseif (in_array($partname, array('login', 'menus', 'substitutions', 'triggers', 'tpl'))) {
 									$newvalue = '/'.$modulename.'/core/'.$partname.'/';
-								} elseif (in_array($partname, array('models', 'theme'))) {
+								} elseif (in_array($partname, array('models', 'theme', 'websitetemplates'))) {
 									$newvalue = '/'.$modulename.'/';
 								} elseif ($value == 1) {
 									$newvalue = '/'.$modulename.'/core/modules/'.$partname.'/'; // ex: partname = societe
@@ -395,11 +398,14 @@ class Conf
 									$modulename = 'supplier_proposal';
 								}
 								$this->modules[$modulename] = $modulename; // Add this module in list of enabled modules
+
 								// deprecated in php 8.2
+								//if (version_compare(phpversion(), '8.2') < 0) {
 								if (!isset($this->$modulename) || !is_object($this->$modulename)) {
-									$this->$modulename = new stdClass();
+									$this->$modulename = new stdClass();	// We need this to use the ->enabled and the ->multidir, ->dir...
 								}
-								$this->$modulename->enabled = true;
+								$this->$modulename->enabled = true;	// TODO Remove this
+								//}
 							}
 						}
 					}
@@ -530,6 +536,9 @@ class Conf
 			}
 
 			// For mycompany storage
+			$this->mycompany->multidir_output = array($this->entity => $rootfordata."/mycompany");
+			$this->mycompany->multidir_temp = array($this->entity => $rootfortemp."/mycompany/temp");
+			// For backward compatibility
 			$this->mycompany->dir_output = $rootfordata."/mycompany";
 			$this->mycompany->dir_temp = $rootfortemp."/mycompany/temp";
 
@@ -685,15 +694,23 @@ class Conf
 				// If module lot/serial enabled, we force the inc/dec mode to STOCK_CALCULATE_ON_SHIPMENT_CLOSE and STOCK_CALCULATE_ON_RECEPTION_CLOSE
 				$this->global->STOCK_CALCULATE_ON_BILL = 0;
 				$this->global->STOCK_CALCULATE_ON_VALIDATE_ORDER = 0;
-				if (empty($this->global->STOCK_CALCULATE_ON_SHIPMENT)) $this->global->STOCK_CALCULATE_ON_SHIPMENT_CLOSE = 1;
-				if (empty($this->global->STOCK_CALCULATE_ON_SHIPMENT_CLOSE)) $this->global->STOCK_CALCULATE_ON_SHIPMENT = 1;
+				if (empty($this->global->STOCK_CALCULATE_ON_SHIPMENT)) {
+					$this->global->STOCK_CALCULATE_ON_SHIPMENT_CLOSE = 1;
+				}
+				if (empty($this->global->STOCK_CALCULATE_ON_SHIPMENT_CLOSE)) {
+					$this->global->STOCK_CALCULATE_ON_SHIPMENT = 1;
+				}
 				$this->global->STOCK_CALCULATE_ON_SUPPLIER_BILL = 0;
 				$this->global->STOCK_CALCULATE_ON_SUPPLIER_VALIDATE_ORDER = 0;
 				if (!isModEnabled('reception')) {
 					$this->global->STOCK_CALCULATE_ON_SUPPLIER_DISPATCH_ORDER = 1;
 				} else {
-					if (empty($this->global->STOCK_CALCULATE_ON_RECEPTION)) $this->global->STOCK_CALCULATE_ON_RECEPTION_CLOSE = 1;
-					if (empty($this->global->STOCK_CALCULATE_ON_RECEPTION_CLOSE)) $this->global->STOCK_CALCULATE_ON_RECEPTION = 1;
+					if (empty($this->global->STOCK_CALCULATE_ON_RECEPTION)) {
+						$this->global->STOCK_CALCULATE_ON_RECEPTION_CLOSE = 1;
+					}
+					if (empty($this->global->STOCK_CALCULATE_ON_RECEPTION_CLOSE)) {
+						$this->global->STOCK_CALCULATE_ON_RECEPTION = 1;
+					}
 				}
 			}
 
@@ -717,7 +734,7 @@ class Conf
 			}
 
 			if (!isset($this->global->MAIN_ENABLE_AJAX_TOOLTIP)) {
-				$this->global->MAIN_ENABLE_AJAX_TOOLTIP = 1;
+				$this->global->MAIN_ENABLE_AJAX_TOOLTIP = 0;	// Not enabled by default (still trouble of persistent tooltip)
 			}
 
 			// By default, suppliers objects can be linked to all projects
@@ -737,7 +754,7 @@ class Conf
 
 			// conf->liste_limit = constante de taille maximale des listes
 			if (empty($this->global->MAIN_SIZE_LISTE_LIMIT)) {
-				$this->global->MAIN_SIZE_LISTE_LIMIT = 25;
+				$this->global->MAIN_SIZE_LISTE_LIMIT = 15;
 			}
 			$this->liste_limit = $this->global->MAIN_SIZE_LISTE_LIMIT;
 
@@ -858,7 +875,7 @@ class Conf
 
 			// Define list of limited modules (value must be key found for "name" property of module, so for example 'supplierproposal' for Module "Supplier Proposal"
 			if (!isset($this->global->MAIN_MODULES_FOR_EXTERNAL)) {
-				$this->global->MAIN_MODULES_FOR_EXTERNAL = 'user,societe,propal,commande,facture,categorie,supplierproposal,fournisseur,contact,projet,contrat,ficheinter,expedition,reception,agenda,resource,adherent,blockedlog'; // '' means 'all'. Note that contact is added here as it should be a module later.
+				$this->global->MAIN_MODULES_FOR_EXTERNAL = 'user,societe,propal,commande,facture,categorie,supplierproposal,fournisseur,contact,projet,contrat,ficheinter,expedition,reception,agenda,resource,adherent,blockedlog,ticket'; // '' means 'all'. Note that contact is added here as it should be a module later.
 			}
 			if (!empty($this->modules_parts['moduleforexternal'])) {		// Module part to include an external module into the MAIN_MODULES_FOR_EXTERNAL list
 				foreach ($this->modules_parts['moduleforexternal'] as $key => $value) {
@@ -986,7 +1003,7 @@ class Conf
 			if (!isset($this->global->MAIN_SECURITY_CSRF_WITH_TOKEN)) {
 				// Value 1 makes CSRF check for all POST parameters only
 				// Value 2 makes also CSRF check for GET requests with action = a sensitive requests like action=del, action=remove...
-				// Value 3 makes also CSRF check for all GET requests with a param action or massaction (except some sensitive values)
+				// Value 3 makes also CSRF check for all GET requests with a param action or massaction (except some non sensitive values)
 				$this->global->MAIN_SECURITY_CSRF_WITH_TOKEN = 2; // TODO Switch value to 3
 				// Note: Set MAIN_SECURITY_CSRF_TOKEN_RENEWAL_ON_EACH_CALL=1 to have a renewal of token at each page call instead of each session (not recommended)
 			}
@@ -996,7 +1013,7 @@ class Conf
 			}
 
 			if (!isset($this->global->MAIL_SMTP_USE_FROM_FOR_HELO)) {
-				$this->global->MAIL_SMTP_USE_FROM_FOR_HELO = 2;
+				$this->global->MAIL_SMTP_USE_FROM_FOR_HELO = 2;	// Use the domain in $dolibarr_main_url_root (mydomain.com)
 			}
 
 			if (!defined('MAIN_ANTIVIRUS_BYPASS_COMMAND_AND_PARAM')) {

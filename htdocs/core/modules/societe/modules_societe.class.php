@@ -59,6 +59,22 @@ abstract class ModeleThirdPartyDoc extends CommonDocGenerator
  */
 abstract class ModeleThirdPartyCode extends CommonNumRefGenerator
 {
+
+	// variables inherited from CommonNumRefGenerator class
+	public $code_null;
+	public $code_modifiable;
+	public $code_modifiable_invalide;
+	public $code_auto;
+
+
+	/**
+	 * Constructor
+	 *
+	 *  @param DoliDB       $db     Database object
+	 */
+	abstract public function __construct($db);
+
+
 	/**
 	 *  Return next value available
 	 *
@@ -71,6 +87,7 @@ abstract class ModeleThirdPartyCode extends CommonNumRefGenerator
 		global $langs;
 		return $langs->trans("Function_getNextValue_InModuleNotWorking");
 	}
+
 
 	// phpcs:disable PEAR.NamingConventions.ValidFunctionName.ScopeNotCamelCaps
 	/**
@@ -101,6 +118,7 @@ abstract class ModeleThirdPartyCode extends CommonNumRefGenerator
 		return $list;
 	}
 
+
 	/**
 	 *  Return description of module parameters
 	 *
@@ -117,7 +135,7 @@ abstract class ModeleThirdPartyCode extends CommonNumRefGenerator
 
 		$strikestart = '';
 		$strikeend = '';
-		if (!empty($conf->global->MAIN_COMPANY_CODE_ALWAYS_REQUIRED) && !empty($this->code_null)) {
+		if (getDolGlobalString('MAIN_COMPANY_CODE_ALWAYS_REQUIRED') && !empty($this->code_null)) {
 			$strikestart = '<strike>';
 			$strikeend = '</strike> '.yn(1, 1, 2).' ('.$langs->trans("ForcedToByAModule", $langs->transnoentities("yes")).')';
 		}
@@ -192,6 +210,11 @@ abstract class ModeleThirdPartyCode extends CommonNumRefGenerator
  */
 abstract class ModeleAccountancyCode extends CommonNumRefGenerator
 {
+	/**
+	 * @var string
+	 */
+	public $code;
+
 	/**
 	 *  Return description of module parameters
 	 *
