@@ -1851,6 +1851,7 @@ if (empty($reshook)) {
 			}
 		}
 
+		/** MODIFSITUATION ***********************************************************************************************************************/
 		// Situation invoices
 		if (GETPOST('type') == Facture::TYPE_SITUATION && GETPOST('situations')) {
 			if (empty($dateinvoice)) {
@@ -1965,8 +1966,8 @@ if (empty($reshook)) {
 					}
 				}
 			}
-			
-			if (!$error && $conf->global->INVOICE_USE_SITUATION == 2) {
+      
+      if (!$error && $conf->global->INVOICE_USE_SITUATION == 2) {
 				$result = $object->fetch(GETPOST('situations', 'int'));
 				$object->fk_facture_source = GETPOST('situations', 'int');
 				$object->type = Facture::TYPE_SITUATION;
@@ -2701,6 +2702,8 @@ if (empty($reshook)) {
 				$pu = $pu_ttc;
 				$price_base_type = 'TTC';
 			}
+
+
 
 			$result = $object->updateline(
 				GETPOST('lineid', 'int'),

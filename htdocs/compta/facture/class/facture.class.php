@@ -969,6 +969,8 @@ class Facture extends CommonInvoice
 				}
 			}
 
+
+
 			/*
 			 * Insert lines coming from the template invoice
 			 */
@@ -1076,7 +1078,9 @@ class Facture extends CommonInvoice
 			}
 
 			if (!$error) {
+
 				$result = $this->update_price(1, 'auto', 0, $mysoc);
+
 				if ($result > 0) {
 					$action = 'create';
 
@@ -1141,11 +1145,11 @@ class Facture extends CommonInvoice
 		$this->fetch_optionals();
 
 		if (!empty($this->array_options)) {
-					$facture->array_options = $this->array_options;
+			$facture->array_options = $this->array_options;
 		}
 
 		foreach ($this->lines as &$line) {
-					$line->fetch_optionals(); //fetch extrafields
+			$line->fetch_optionals(); //fetch extrafields
 		}
 
 		$facture->fk_facture_source = $this->fk_facture_source;
@@ -1177,7 +1181,6 @@ class Facture extends CommonInvoice
 		$facture->retained_warranty_date_limit = $this->retained_warranty_date_limit;
 
 		$facture->fk_user_author = $user->id;
-
 
 		// Loop on each line of new invoice
 		foreach ($facture->lines as $i => $tmpline) {
@@ -3548,7 +3551,7 @@ class Facture extends CommonInvoice
 				if (!empty($conf->global->INVOICE_USE_SITUATION)) {
 					$final = true;
 					$nboflines = count($this->lines);
-					while (($i < $nboflines) && $final) {						
+					while (($i < $nboflines) && $final) {
 						if(getDolGlobalInt('INVOICE_USE_SITUATION') == 2){
 							$previousprogress = $this->lines[$i]->get_allprev_progress($this->lines[$i]->fk_facture);
 							$current_progress = floatval($this->lines[$i]->situation_percent);
@@ -4305,7 +4308,7 @@ class Facture extends CommonInvoice
 	public function update_percent($line, $percent, $update_price = true)
 	{
 		// phpcs:enable
-		global $mysoc, $user;
+		global $mysoc, $user, $conf;
 
 		// Progress should never be changed for discount lines
 		if (($line->info_bits & 2) == 2) {
@@ -4320,8 +4323,7 @@ class Facture extends CommonInvoice
 		}
 
 		$invoice_use_situation = getDolGlobalInt('INVOICE_USE_SITUATION');
-		
-		if($invoice_use_situation == 1){
+    if($invoice_use_situation == 1){
 			$line->situation_percent = $percent;
 			$tabprice = calcul_price_total($line->qty, $line->subprice, $line->remise_percent, $line->tva_tx, $line->localtax1_tx, $line->localtax2_tx, 0, 'HT', 0, $line->product_type, $mysoc, '', $percent);
 		} elseif($invoice_use_situation == 2){
@@ -6212,9 +6214,8 @@ class Facture extends CommonInvoice
 			// Situations totals
 			if (!empty($this->situation_cycle_ref) && $this->situation_counter > 1 && method_exists($this, 'get_prev_sits') && $this->type != $this::TYPE_CREDIT_NOTE) {
 
-				if($conf->global->INVOICE_USE_SITUATION != 2){				
-
-					$prev_sits = $this->get_prev_sits();
+				if($conf->global->INVOICE_USE_SITUATION != 2){
+          $prev_sits = $this->get_prev_sits();
 
 					foreach ($prev_sits as $sit) {				// $sit is an object Facture loaded with a fetch.
 						$this->total_ht -= $sit->total_ht;
@@ -7113,7 +7114,7 @@ class FactureLigne extends CommonInvoiceLine
 					dol_syslog(get_class($this)."::select Error ".$this->error, LOG_ERR);
 					$this->db->rollback();
 					return -1;
-				}				
+				}
 			}
 			return $cumulated_percent;
 		}
